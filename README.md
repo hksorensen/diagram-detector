@@ -79,7 +79,11 @@ diagram-detect --input images/ --remote user@gpu-server:22 --output results/
 
 ## Model
 
-Uses YOLO11-medium (49 MB) optimized for production use. Model is automatically downloaded on first use from [HuggingFace Hub](https://huggingface.co/hksorensen/diagram-detector-model).
+Uses YOLO11-medium (49 MB) optimized for production use with 98.49% Binary F1 score.
+
+**Model weights:** [HuggingFace Hub](https://huggingface.co/hksorensen/diagram-detector-model) (DOI: [10.57967/hf/7364](https://doi.org/10.57967/hf/7364))
+
+Model is automatically downloaded on first use.
 
 ## Advanced Usage
 
@@ -204,6 +208,8 @@ mypy .
 
 If you use this detector in your research, please cite:
 
+### Code
+
 ```bibtex
 @software{diagram_detector,
   title = {diagram-detector: Production-ready diagram detection for academic papers},
@@ -215,7 +221,20 @@ If you use this detector in your research, please cite:
 }
 ```
 
-**Note:** Use the concept DOI `10.5281/zenodo.18077390` to always cite the latest version, or the version-specific DOI `10.5281/zenodo.18077391` for reproducibility of this exact version.
+### Model
+
+```bibtex
+@misc{diagram_detector_model,
+  title = {Diagram Detector YOLO11 Model},
+  author = {Sørensen, Henrik Kragh},
+  year = {2025},
+  doi = {10.57967/hf/7364},
+  url = {https://huggingface.co/hksorensen/diagram-detector-model},
+  note = {98.49\% Binary F1, optimized parameters: conf=0.20, iou=0.30}
+}
+```
+
+**Note:** Use the concept DOI `10.5281/zenodo.18077390` to always cite the latest code version, or the version-specific DOI `10.5281/zenodo.18077391` for reproducibility of this exact version.
 
 ## License
 
