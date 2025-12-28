@@ -1,0 +1,119 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diagram-detector"
+version = "1.0.0"
+description = "Production-ready diagram detection for academic papers using YOLO11"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Henrik Kragh Sørensen", email = "hks@ku.dk"}
+]
+maintainers = [
+    {name = "Henrik Kragh Sørensen", email = "hks@ku.dk"}
+]
+keywords = [
+    "diagram",
+    "detection",
+    "yolo",
+    "computer-vision",
+    "academic-papers",
+    "pdf",
+    "machine-learning"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+dependencies = [
+    "ultralytics>=8.0.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "opencv-python-headless>=4.8.0",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "pdf2image>=1.16.0",
+    "huggingface_hub>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.7.0",
+    "flake8>=6.0.0",
+    "mypy>=1.4.0",
+    "isort>=5.12.0",
+]
+onnx = [
+    "onnxruntime>=1.15.0",
+]
+gpu = [
+    "onnxruntime-gpu>=1.15.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/hksorensen/diagram-detector"
+Documentation = "https://diagram-detector.readthedocs.io"
+Repository = "https://github.com/hksorensen/diagram-detector"
+Issues = "https://github.com/hksorensen/diagram-detector/issues"
+Changelog = "https://github.com/hksorensen/diagram-detector/blob/main/CHANGELOG.md"
+
+[project.scripts]
+diagram-detect = "diagram_detector.cli:main"
+
+[tool.setuptools]
+packages = ["diagram_detector"]
+
+[tool.setuptools.package-data]
+diagram_detector = ["py.typed", "models/"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=diagram_detector --cov-report=html --cov-report=term"
+
+[tool.coverage.run]
+source = ["diagram_detector"]
+omit = ["*/tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
