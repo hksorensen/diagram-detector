@@ -3,6 +3,7 @@
 Production-ready diagram detection for academic papers using YOLO11.
 
 [![PyPI version](https://badge.fury.io/py/diagram-detector.svg)](https://badge.fury.io/py/diagram-detector)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18077390.svg)](https://doi.org/10.5281/zenodo.18077390)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -208,9 +209,13 @@ If you use this detector in your research, please cite:
   title = {diagram-detector: Production-ready diagram detection for academic papers},
   author = {Sørensen, Henrik Kragh},
   year = {2025},
+  version = {1.1.0},
+  doi = {10.5281/zenodo.18077391},
   url = {https://github.com/hksorensen/diagram-detector}
 }
 ```
+
+**Note:** Use the concept DOI `10.5281/zenodo.18077390` to always cite the latest version, or the version-specific DOI `10.5281/zenodo.18077391` for reproducibility of this exact version.
 
 ## License
 
