@@ -11,7 +11,7 @@ Production-ready diagram detection for academic papers using YOLO11.
 - 🚀 **Fast**: 50-500 images/second depending on hardware
 - 🌐 **Remote GPU**: Process on remote server via SSH
 - 📄 **PDF Support**: Automatically processes PDF pages
-- 🎯 **Accurate**: F1 score 0.74-0.82 depending on model
+- 🎯 **Accurate**: 98.49% Binary F1 score (optimized for page-level detection)
 - 🔧 **Flexible**: CPU, CUDA, and MPS (Apple Silicon) support
 - 📊 **Multiple Formats**: JSON, CSV, cropped images, visualizations
 - 🔄 **Batch Optimized**: Auto-detects optimal batch size
@@ -25,7 +25,7 @@ pip install diagram-detector
 
 ### From source:
 ```bash
-git clone https://github.com/yourusername/diagram-detector.git
+git clone https://github.com/hksorensen/diagram-detector.git
 cd diagram-detector
 pip install -e .
 ```
@@ -38,7 +38,7 @@ pip install -e .
 from diagram_detector import DiagramDetector
 
 # Initialize detector
-detector = DiagramDetector(model='yolo11m')  # or 'yolo11n', 'yolo11l', etc.
+detector = DiagramDetector()
 
 # Detect diagrams in images
 results = detector.detect('path/to/images/')
@@ -76,17 +76,9 @@ diagram-detect --input papers/*.pdf --output results/ --batch-size 16
 diagram-detect --input images/ --remote user@gpu-server:22 --output results/
 ```
 
-## Models
+## Model
 
-| Model | Size | Speed | Accuracy | Use Case |
-|-------|------|-------|----------|----------|
-| yolo11n | 6 MB | ⚡⚡⚡⚡⚡ | ⭐⭐⭐ | Mobile, testing |
-| yolo11s | 22 MB | ⚡⚡⚡⚡ | ⭐⭐⭐⭐ | Edge devices |
-| yolo11m | 49 MB | ⚡⚡⚡ | ⭐⭐⭐⭐⭐ | **Production (recommended)** |
-| yolo11l | 63 MB | ⚡⚡ | ⭐⭐⭐⭐⭐⭐ | High accuracy |
-| yolo11x | 137 MB | ⚡ | ⭐⭐⭐⭐⭐⭐⭐ | Research |
-
-Models are automatically downloaded on first use.
+Uses YOLO11-medium (49 MB) optimized for production use. Model is automatically downloaded on first use from [HuggingFace Hub](https://huggingface.co/hksorensen/diagram-detector-model).
 
 ## Advanced Usage
 
@@ -94,9 +86,9 @@ Models are automatically downloaded on first use.
 
 ```python
 detector = DiagramDetector(
-    model='yolo11m',
-    confidence=0.35,
-    device='cuda',  # or 'cpu', 'mps'
+    confidence=0.20,  # optimized default
+    iou=0.30,  # optimized default
+    device='cuda',  # or 'cpu', 'mps', 'auto'
     batch_size=32,  # or 'auto'
 )
 
@@ -188,22 +180,11 @@ figure1.jpg,true,2,0.89
 figure2.jpg,false,0,0.00
 ```
 
-## Docker Support
-
-```bash
-# Build image
-docker build -t diagram-detector .
-
-# Run inference
-docker run -v $(pwd)/data:/data diagram-detector \
-    diagram-detect --input /data/images/ --output /data/results/
-```
-
 ## Development
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/diagram-detector.git
+git clone https://github.com/hksorensen/diagram-detector.git
 cd diagram-detector
 
 # Install development dependencies
@@ -225,9 +206,9 @@ If you use this detector in your research, please cite:
 ```bibtex
 @software{diagram_detector,
   title = {diagram-detector: Production-ready diagram detection for academic papers},
-  author = {Your Name},
-  year = {2024},
-  url = {https://github.com/yourusername/diagram-detector}
+  author = {Sørensen, Henrik Kragh},
+  year = {2025},
+  url = {https://github.com/hksorensen/diagram-detector}
 }
 ```
 
@@ -243,9 +224,8 @@ MIT License - see LICENSE file for details.
 
 ## Support
 
-- 📖 [Documentation](https://diagram-detector.readthedocs.io/)
-- 🐛 [Issue Tracker](https://github.com/yourusername/diagram-detector/issues)
-- 💬 [Discussions](https://github.com/yourusername/diagram-detector/discussions)
+- 🐛 [Issue Tracker](https://github.com/hksorensen/diagram-detector/issues)
+- 💬 [Discussions](https://github.com/hksorensen/diagram-detector/discussions)
 
 ## Changelog
 
