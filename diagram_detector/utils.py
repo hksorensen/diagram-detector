@@ -88,7 +88,7 @@ def get_model_path(model_name: str) -> Path:
     """Get cached model path."""
     if model_name not in MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}. Available: {list_models()}")
-    
+
     cache_dir = get_cache_dir()
     return cache_dir / f"{model_name}.pt"
 
@@ -106,25 +106,24 @@ def download_from_huggingface(
 ) -> bool:
     """
     Download model from Hugging Face Hub.
-    
+
     Args:
         model_name: Model name
         model_path: Where to save model
         show_progress: Show download progress
-        
+
     Returns:
         True if successful, False otherwise
     """
     try:
         from huggingface_hub import hf_hub_download
-        
+
         # Extract repo and filename from MODEL_SOURCES
-        hf_path = MODEL_SOURCES[model_name]['huggingface']
         repo_id = HF_REPO
         filename = f"{model_name}.pt"
-        
+
         print(f"Downloading from Hugging Face Hub: {repo_id}/{filename}")
-        
+
         # Download to temporary location first
         temp_path = hf_hub_download(
             repo_id=repo_id,
@@ -132,11 +131,11 @@ def download_from_huggingface(
             cache_dir=get_cache_dir() / 'hf_cache',
             resume_download=True,
         )
-        
+
         # Copy to final location
         import shutil
         shutil.copy2(temp_path, model_path)
-        
+
         # Also download metadata if available
         try:
             metadata_filename = f"{model_name}_metadata.json"
@@ -151,9 +150,9 @@ def download_from_huggingface(
         except Exception:
             # Metadata is optional
             pass
-        
+
         return True
-        
+
     except ImportError:
         print("⚠ huggingface_hub not installed, trying GitHub...")
         return False
@@ -169,21 +168,21 @@ def download_from_github(
 ) -> bool:
     """
     Download model from GitHub releases.
-    
+
     Args:
         model_name: Model name
         model_path: Where to save model
         show_progress: Show download progress
-        
+
     Returns:
         True if successful, False otherwise
     """
     try:
         import urllib.request
-        
+
         url = MODEL_SOURCES[model_name]['github']
         print(f"Downloading from GitHub: {url}")
-        
+
         def progress_hook(block_num, block_size, total_size):
             if not show_progress or total_size <= 0:
                 return
@@ -193,11 +192,11 @@ def download_from_github(
             filled = int(bar_length * percent / 100)
             bar = '=' * filled + '-' * (bar_length - filled)
             print(f'\r[{bar}] {percent:.1f}%', end='', flush=True)
-        
+
         urllib.request.urlretrieve(url, model_path, progress_hook)
         if show_progress:
             print()  # New line after progress
-        
+
         # Try to download metadata
         try:
             metadata_url = url.replace('.pt', '_metadata.json')
@@ -207,9 +206,9 @@ def download_from_github(
         except Exception:
             # Metadata is optional
             pass
-        
+
         return True
-        
+
     except Exception as e:
         print(f"⚠ GitHub download failed: {e}")
         return False
@@ -222,28 +221,28 @@ def download_model(
 ) -> Path:
     """
     Download model weights if not present.
-    
+
     Uses multiple sources with fallback:
     1. Hugging Face Hub (primary, requires huggingface_hub)
     2. GitHub releases (fallback)
-    
+
     Args:
         model_name: Model name (yolo11n, yolo11m, etc.)
         force: Force re-download even if cached
         source: Download source ('auto', 'huggingface', 'github')
-        
+
     Returns:
         Path to downloaded model
-        
+
     Raises:
         ValueError: If model name unknown
         RuntimeError: If all download sources fail
     """
     if model_name not in MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}. Available: {list_models()}")
-    
+
     model_path = get_model_path(model_name)
-    
+
     # Check if already cached
     if model_path.exists() and not force:
         if model_path.stat().st_size > 0:  # Verify file is not empty
@@ -251,9 +250,9 @@ def download_model(
         else:
             # Corrupted file, remove it
             model_path.unlink()
-    
+
     print(f"Downloading {model_name} model ({MODEL_INFO[model_name]['size_mb']} MB)...")
-    
+
     # Try sources in order
     sources_to_try = []
     if source == 'auto':
@@ -262,38 +261,38 @@ def download_model(
         sources_to_try = [source]
     else:
         raise ValueError(f"Unknown source: {source}. Use 'auto', 'huggingface', or 'github'")
-    
+
     success = False
     last_error = None
-    
+
     for src in sources_to_try:
         try:
             if src == 'huggingface':
                 success = download_from_huggingface(model_name, model_path)
             elif src == 'github':
                 success = download_from_github(model_name, model_path)
-            
+
             if success:
                 break
         except Exception as e:
             last_error = e
             continue
-    
+
     if not success or not model_path.exists():
         # Clean up partial download
         if model_path.exists():
             model_path.unlink()
-        
+
         error_msg = f"Failed to download {model_name} from all sources"
         if last_error:
             error_msg += f": {last_error}"
         raise RuntimeError(error_msg)
-    
+
     # Verify downloaded file
     if model_path.stat().st_size == 0:
         model_path.unlink()
         raise RuntimeError(f"Downloaded file is empty")
-    
+
     print(f"✓ Model downloaded to {model_path}")
     return model_path
 
@@ -301,18 +300,18 @@ def download_model(
 def load_model_metadata(model_name: str) -> Optional[dict]:
     """
     Load model metadata if available.
-    
+
     Args:
         model_name: Model name
-        
+
     Returns:
         Metadata dict or None if not available
     """
     metadata_path = get_metadata_path(model_name)
-    
+
     if not metadata_path.exists():
         return None
-    
+
     try:
         import json
         with open(metadata_path, 'r') as f:
@@ -324,24 +323,24 @@ def load_model_metadata(model_name: str) -> Optional[dict]:
 def detect_device() -> str:
     """
     Auto-detect best available device.
-    
+
     Returns:
         'cuda', 'mps', or 'cpu'
     """
     if torch.cuda.is_available():
         return 'cuda'
-    
+
     # Check for Apple Silicon MPS
     if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         return 'mps'
-    
+
     return 'cpu'
 
 
 def get_device_info(device: str) -> dict:
     """Get information about device."""
     info = {'device': device}
-    
+
     if device == 'cuda':
         info['name'] = torch.cuda.get_device_name(0)
         info['memory_gb'] = torch.cuda.get_device_properties(0).total_memory / (1024**3)
@@ -349,7 +348,7 @@ def get_device_info(device: str) -> dict:
         info['name'] = 'Apple Silicon (MPS)'
     else:
         info['name'] = 'CPU'
-    
+
     return info
 
 
@@ -360,39 +359,39 @@ def optimize_batch_size(
 ) -> int:
     """
     Calculate optimal batch size for device.
-    
+
     Args:
         model_name: Model name
         device: Device type ('cpu', 'cuda', 'mps')
         available_memory_gb: Available memory in GB (auto-detected if None)
-        
+
     Returns:
         Optimal batch size
     """
     if model_name not in MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}")
-    
+
     model_info = MODEL_INFO[model_name]
-    
+
     # Get default batch sizes
     if device == 'cpu':
         base_batch = model_info['default_batch_cpu']
     else:  # cuda or mps
         base_batch = model_info['default_batch_gpu']
-        
+
         # Adjust based on available memory
         if available_memory_gb is None and device == 'cuda':
             available_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        
+
         if available_memory_gb:
             # Scale batch size based on memory
             # Assume 2GB baseline for batch=16 on yolo11m
             memory_factor = available_memory_gb / 2.0
             base_batch = int(base_batch * memory_factor)
-            
+
             # Clamp to reasonable range
             base_batch = max(1, min(128, base_batch))
-    
+
     return base_batch
 
 
@@ -423,7 +422,7 @@ def convert_pdf_to_images(
             "pdf2image is required for PDF support. "
             "Install with: pip install pdf2image"
         )
-    
+
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -450,19 +449,19 @@ def convert_pdf_to_images(
 def load_image(image_path: Union[str, Path]) -> np.ndarray:
     """
     Load image from file.
-    
+
     Args:
         image_path: Path to image file
-        
+
     Returns:
         Image as numpy array (RGB)
     """
     from PIL import Image
-    
+
     image_path = Path(image_path)
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
-    
+
     img = Image.open(image_path).convert('RGB')
     return np.array(img)
 
@@ -470,10 +469,10 @@ def load_image(image_path: Union[str, Path]) -> np.ndarray:
 def save_json(data: dict, output_path: Union[str, Path]) -> None:
     """Save data as JSON."""
     import json
-    
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     with open(output_path, 'w') as f:
         json.dump(data, f, indent=2)
 
@@ -481,13 +480,13 @@ def save_json(data: dict, output_path: Union[str, Path]) -> None:
 def save_csv(data: List[dict], output_path: Union[str, Path]) -> None:
     """Save data as CSV."""
     import csv
-    
+
     if not data:
         return
-    
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     with open(output_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=data[0].keys())
         writer.writeheader()
@@ -497,16 +496,16 @@ def save_csv(data: List[dict], output_path: Union[str, Path]) -> None:
 def validate_model_file(model_path: Path) -> bool:
     """
     Validate that model file exists and is loadable.
-    
+
     Args:
         model_path: Path to model file
-        
+
     Returns:
         True if valid
     """
     if not model_path.exists():
         return False
-    
+
     try:
         # Try to load checkpoint
         checkpoint = torch.load(model_path, map_location='cpu')
@@ -518,16 +517,16 @@ def validate_model_file(model_path: Path) -> bool:
 def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
     """
     Get all image files in directory.
-    
+
     Args:
         directory: Directory to search
         recursive: Search recursively
-        
+
     Returns:
         List of image file paths
     """
     image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
-    
+
     if recursive:
         files = []
         for ext in image_extensions:
@@ -538,5 +537,5 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
         for ext in image_extensions:
             files.extend(directory.glob(f'*{ext}'))
             files.extend(directory.glob(f'*{ext.upper()}'))
-    
+
     return sorted(files)
