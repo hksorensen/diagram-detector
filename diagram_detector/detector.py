@@ -175,10 +175,10 @@ class DiagramDetector:
         
         if self.verbose:
             print(f"Processing PDF: {pdf_path.name}")
-        
+
         # Convert PDF to images
-        images = convert_pdf_to_images(pdf_path, dpi, first_page, last_page)
-        
+        images = convert_pdf_to_images(pdf_path, dpi, first_page, last_page, verbose=self.verbose)
+
         if self.verbose:
             print(f"✓ Converted {len(images)} pages")
         

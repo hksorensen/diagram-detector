@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Union, Optional
 import torch
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 # Model information
@@ -400,17 +400,19 @@ def convert_pdf_to_images(
     pdf_path: Union[str, Path],
     dpi: int = 200,
     first_page: Optional[int] = None,
-    last_page: Optional[int] = None
+    last_page: Optional[int] = None,
+    verbose: bool = True
 ) -> List[np.ndarray]:
     """
     Convert PDF pages to images.
-    
+
     Args:
         pdf_path: Path to PDF file
         dpi: Resolution for conversion (higher = better quality, slower)
         first_page: First page to convert (1-indexed)
         last_page: Last page to convert (1-indexed)
-        
+        verbose: Show progress messages
+
     Returns:
         List of images as numpy arrays
     """
@@ -425,9 +427,10 @@ def convert_pdf_to_images(
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
-    
-    print(f"Converting PDF to images (DPI={dpi})...")
-    
+
+    if verbose:
+        print(f"Converting PDF to images (DPI={dpi})...")
+
     images = convert_from_path(
         pdf_path,
         dpi=dpi,
@@ -435,12 +438,12 @@ def convert_pdf_to_images(
         last_page=last_page,
         fmt='jpeg',  # Faster than PNG
     )
-    
+
     # Convert PIL Images to numpy arrays
     np_images = []
     for img in tqdm(images, desc="Converting pages", unit="page"):
         np_images.append(np.array(img))
-    
+
     return np_images
 
 
