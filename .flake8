@@ -1,4 +1,6 @@
 [flake8]
 max-line-length = 100
-ignore = W293,E501,F541,E502,E131,F821,F401,W503,W504,E226
+# W503/W504: Line breaks around binary operators (PEP 8 recommends before, not after)
+# E203: Whitespace before ':' (black formats slices this way)
+ignore = W503,W504,E203
 exclude = .git,__pycache__,build,dist,*.egg-info

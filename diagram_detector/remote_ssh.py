@@ -6,12 +6,10 @@ Optimized for processing large image corpora (100K+ images).
 """
 
 from pathlib import Path
-from typing import List, Union, Optional, Tuple
+from typing import List, Union, Optional
 import subprocess
 import json
-import time
 from dataclasses import dataclass
-from tqdm import tqdm
 import tempfile
 import shutil
 
@@ -22,11 +20,12 @@ from .utils import get_image_files
 @dataclass
 class RemoteConfig:
     """Configuration for remote SSH server."""
-    host: str = 'thinkcentre.local'
+
+    host: str = "thinkcentre.local"
     port: int = 22
-    user: str = 'hkragh'
-    remote_work_dir: str = '~/diagram-inference'
-    python_path: str = 'python'  # or path to venv python
+    user: str = "hkragh"
+    remote_work_dir: str = "~/diagram-inference"
+    python_path: str = "python"  # or path to venv python
 
     @property
     def ssh_target(self) -> str:
@@ -36,7 +35,7 @@ class RemoteConfig:
     @property
     def ssh_port_args(self) -> List[str]:
         """Get SSH port arguments."""
-        return ['-p', str(self.port)] if self.port != 22 else []
+        return ["-p", str(self.port)] if self.port != 22 else []
 
 
 class SSHRemoteDetector:
@@ -54,7 +53,7 @@ class SSHRemoteDetector:
         self,
         config: Union[RemoteConfig, str],
         batch_size: int = 1000,
-        model: str = 'yolo11m',
+        model: str = "yolo11m",
         confidence: float = 0.35,
         verbose: bool = True,
     ):
@@ -84,13 +83,13 @@ class SSHRemoteDetector:
     def _parse_connection_string(self, conn_str: str) -> RemoteConfig:
         """Parse connection string like 'user@host:port'."""
         # user@host:port format
-        if '@' not in conn_str:
+        if "@" not in conn_str:
             raise ValueError("Connection string must be in format: user@host:port")
 
-        user, rest = conn_str.split('@', 1)
+        user, rest = conn_str.split("@", 1)
 
-        if ':' in rest:
-            host, port = rest.rsplit(':', 1)
+        if ":" in rest:
+            host, port = rest.rsplit(":", 1)
             port = int(port)
         else:
             host = rest
@@ -104,16 +103,8 @@ class SSHRemoteDetector:
             print(f"Verifying SSH connection to {self.config.ssh_target}:{self.config.port}...")
 
         try:
-            cmd = ['ssh'] + self.config.ssh_port_args + [
-                self.config.ssh_target,
-                'echo "OK"'
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            cmd = ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, 'echo "OK"']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
             if result.returncode != 0:
                 raise RuntimeError(f"SSH connection failed: {result.stderr}")
@@ -128,16 +119,9 @@ class SSHRemoteDetector:
 
     def _run_ssh_command(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run command on remote server."""
-        cmd = ['ssh'] + self.config.ssh_port_args + [
-            self.config.ssh_target,
-            command
-        ]
+        cmd = ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, command]
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         if check and result.returncode != 0:
             raise RuntimeError(f"Remote command failed: {result.stderr}")
@@ -162,11 +146,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print("✓ Remote workspace ready")
 
-    def _upload_batch(
-        self,
-        image_paths: List[Path],
-        batch_id: str
-    ) -> None:
+    def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
         """Upload batch of images via rsync."""
         if self.verbose:
             print(f"Uploading batch {batch_id} ({len(image_paths)} images)...")
@@ -182,14 +162,15 @@ class SSHRemoteDetector:
             # Rsync to remote
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
 
-            cmd = [
-                'rsync',
-                '-az',
-                '--progress' if self.verbose else '--quiet',
-            ] + self.config.ssh_port_args + [
-                f'{temp_path}/',
-                f'{self.config.ssh_target}:{remote_input}'
-            ]
+            cmd = (
+                [
+                    "rsync",
+                    "-az",
+                    "--progress" if self.verbose else "--quiet",
+                ]
+                + self.config.ssh_port_args
+                + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+            )
 
             result = subprocess.run(cmd, capture_output=not self.verbose)
 
@@ -199,11 +180,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"✓ Batch {batch_id} uploaded")
 
-    def _run_inference_batch(
-        self,
-        batch_id: str,
-        gpu_batch_size: int = 32
-    ) -> None:
+    def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32) -> None:
         """Run inference on batch on remote server."""
         if self.verbose:
             print(f"Running inference on batch {batch_id}...")
@@ -230,11 +207,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"✓ Batch {batch_id} processed")
 
-    def _download_results(
-        self,
-        batch_id: str,
-        output_dir: Path
-    ) -> Path:
+    def _download_results(self, batch_id: str, output_dir: Path) -> Path:
         """Download results from remote server."""
         if self.verbose:
             print(f"Downloading results for batch {batch_id}...")
@@ -246,14 +219,15 @@ class SSHRemoteDetector:
         # Rsync results
         remote_output = f"{self.config.remote_work_dir}/output/{batch_id}/"
 
-        cmd = [
-            'rsync',
-            '-az',
-            '--progress' if self.verbose else '--quiet',
-        ] + self.config.ssh_port_args + [
-            f'{self.config.ssh_target}:{remote_output}',
-            str(batch_output)
-        ]
+        cmd = (
+            [
+                "rsync",
+                "-az",
+                "--progress" if self.verbose else "--quiet",
+            ]
+            + self.config.ssh_port_args
+            + [f"{self.config.ssh_target}:{remote_output}", str(batch_output)]
+        )
 
         result = subprocess.run(cmd, capture_output=not self.verbose)
 
@@ -281,30 +255,30 @@ class SSHRemoteDetector:
 
     def _parse_results(self, results_dir: Path) -> List[DetectionResult]:
         """Parse results from JSON file."""
-        json_file = results_dir / 'detections.json'
+        json_file = results_dir / "detections.json"
 
         if not json_file.exists():
             raise RuntimeError(f"Results file not found: {json_file}")
 
-        with open(json_file, 'r') as f:
+        with open(json_file, "r") as f:
             data = json.load(f)
 
         results = []
         for item in data:
             detections = [
                 DiagramDetection(
-                    bbox=tuple(d['bbox']),
-                    confidence=d['confidence'],
-                    class_name=d.get('class', 'diagram')
+                    bbox=tuple(d["bbox"]),
+                    confidence=d["confidence"],
+                    class_name=d.get("class", "diagram"),
                 )
-                for d in item.get('detections', [])
+                for d in item.get("detections", [])
             ]
 
             result = DetectionResult(
-                filename=item['filename'],
+                filename=item["filename"],
                 detections=detections,
-                image_width=item.get('image_width', 0),
-                image_height=item.get('image_height', 0),
+                image_width=item.get("image_width", 0),
+                image_height=item.get("image_height", 0),
             )
 
             results.append(result)
@@ -349,13 +323,13 @@ class SSHRemoteDetector:
 
         # Setup output directory
         if output_dir is None:
-            output_dir = Path('remote_inference_results')
+            output_dir = Path("remote_inference_results")
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if self.verbose:
             print(f"\n{'='*60}")
-            print(f"REMOTE INFERENCE")
+            print("REMOTE INFERENCE")
             print(f"{'='*60}")
             print(f"Images: {len(image_paths):,}")
             print(f"Batch size: {self.batch_size:,} images/batch")
@@ -429,10 +403,11 @@ class SSHRemoteDetector:
             total_diagrams = sum(r.count for r in all_results)
 
             print(f"\n{'='*60}")
-            print(f"REMOTE INFERENCE COMPLETE")
+            print("REMOTE INFERENCE COMPLETE")
             print(f"{'='*60}")
             print(f"Total images: {len(all_results):,}")
-            print(f"With diagrams: {total_with_diagrams:,} ({total_with_diagrams/len(all_results)*100:.1f}%)")
+            pct = total_with_diagrams / len(all_results) * 100
+            print(f"With diagrams: {total_with_diagrams:,} ({pct:.1f}%)")
             print(f"Total diagrams: {total_diagrams:,}")
             print(f"Results saved: {output_dir}")
             print(f"{'='*60}\n")
@@ -451,17 +426,17 @@ def parse_remote_string(remote_str: str) -> RemoteConfig:
     - ssh://user@host:port
     """
     # Remove ssh:// prefix if present
-    if remote_str.startswith('ssh://'):
+    if remote_str.startswith("ssh://"):
         remote_str = remote_str[6:]
 
     # Parse user@host:port
-    if '@' not in remote_str:
+    if "@" not in remote_str:
         raise ValueError("Remote string must contain '@' (format: user@host:port)")
 
-    user, rest = remote_str.split('@', 1)
+    user, rest = remote_str.split("@", 1)
 
-    if ':' in rest:
-        host, port_str = rest.rsplit(':', 1)
+    if ":" in rest:
+        host, port_str = rest.rsplit(":", 1)
         port = int(port_str)
     else:
         host = rest

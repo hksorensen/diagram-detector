@@ -9,35 +9,35 @@ from tqdm.auto import tqdm
 
 # Model information
 MODEL_INFO = {
-    'yolo11n': {
-        'size_mb': 6,
-        'params': '2.6M',
-        'default_batch_cpu': 8,
-        'default_batch_gpu': 64,
+    "yolo11n": {
+        "size_mb": 6,
+        "params": "2.6M",
+        "default_batch_cpu": 8,
+        "default_batch_gpu": 64,
     },
-    'yolo11s': {
-        'size_mb': 22,
-        'params': '9.4M',
-        'default_batch_cpu': 4,
-        'default_batch_gpu': 48,
+    "yolo11s": {
+        "size_mb": 22,
+        "params": "9.4M",
+        "default_batch_cpu": 4,
+        "default_batch_gpu": 48,
     },
-    'yolo11m': {
-        'size_mb': 49,
-        'params': '20.1M',
-        'default_batch_cpu': 2,
-        'default_batch_gpu': 32,
+    "yolo11m": {
+        "size_mb": 49,
+        "params": "20.1M",
+        "default_batch_cpu": 2,
+        "default_batch_gpu": 32,
     },
-    'yolo11l': {
-        'size_mb': 63,
-        'params': '25.3M',
-        'default_batch_cpu': 1,
-        'default_batch_gpu': 16,
+    "yolo11l": {
+        "size_mb": 63,
+        "params": "25.3M",
+        "default_batch_cpu": 1,
+        "default_batch_gpu": 16,
     },
-    'yolo11x': {
-        'size_mb': 137,
-        'params': '56.9M',
-        'default_batch_cpu': 1,
-        'default_batch_gpu': 8,
+    "yolo11x": {
+        "size_mb": 137,
+        "params": "56.9M",
+        "default_batch_cpu": 1,
+        "default_batch_gpu": 8,
     },
 }
 
@@ -49,25 +49,25 @@ GITHUB_RELEASE_BASE = "https://github.com/hksorensen/diagram-detector/releases/d
 
 # Model URLs - multiple sources for robustness
 MODEL_SOURCES = {
-    'yolo11n': {
-        'huggingface': f'{HF_REPO}/yolo11n.pt',
-        'github': f'{GITHUB_RELEASE_BASE}/yolo11n.pt',
+    "yolo11n": {
+        "huggingface": f"{HF_REPO}/yolo11n.pt",
+        "github": f"{GITHUB_RELEASE_BASE}/yolo11n.pt",
     },
-    'yolo11s': {
-        'huggingface': f'{HF_REPO}/yolo11s.pt',
-        'github': f'{GITHUB_RELEASE_BASE}/yolo11s.pt',
+    "yolo11s": {
+        "huggingface": f"{HF_REPO}/yolo11s.pt",
+        "github": f"{GITHUB_RELEASE_BASE}/yolo11s.pt",
     },
-    'yolo11m': {
-        'huggingface': f'{HF_REPO}/yolo11m.pt',
-        'github': f'{GITHUB_RELEASE_BASE}/yolo11m.pt',
+    "yolo11m": {
+        "huggingface": f"{HF_REPO}/yolo11m.pt",
+        "github": f"{GITHUB_RELEASE_BASE}/yolo11m.pt",
     },
-    'yolo11l': {
-        'huggingface': f'{HF_REPO}/yolo11l.pt',
-        'github': f'{GITHUB_RELEASE_BASE}/yolo11l.pt',
+    "yolo11l": {
+        "huggingface": f"{HF_REPO}/yolo11l.pt",
+        "github": f"{GITHUB_RELEASE_BASE}/yolo11l.pt",
     },
-    'yolo11x': {
-        'huggingface': f'{HF_REPO}/yolo11x.pt',
-        'github': f'{GITHUB_RELEASE_BASE}/yolo11x.pt',
+    "yolo11x": {
+        "huggingface": f"{HF_REPO}/yolo11x.pt",
+        "github": f"{GITHUB_RELEASE_BASE}/yolo11x.pt",
     },
 }
 
@@ -79,7 +79,7 @@ def list_models() -> List[str]:
 
 def get_cache_dir() -> Path:
     """Get cache directory for models."""
-    cache_dir = Path.home() / '.cache' / 'diagram-detector' / 'models'
+    cache_dir = Path.home() / ".cache" / "diagram-detector" / "models"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
@@ -100,9 +100,7 @@ def get_metadata_path(model_name: str) -> Path:
 
 
 def download_from_huggingface(
-    model_name: str,
-    model_path: Path,
-    show_progress: bool = True
+    model_name: str, model_path: Path, show_progress: bool = True
 ) -> bool:
     """
     Download model from Hugging Face Hub.
@@ -128,12 +126,13 @@ def download_from_huggingface(
         temp_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
-            cache_dir=get_cache_dir() / 'hf_cache',
+            cache_dir=get_cache_dir() / "hf_cache",
             resume_download=True,
         )
 
         # Copy to final location
         import shutil
+
         shutil.copy2(temp_path, model_path)
 
         # Also download metadata if available
@@ -142,11 +141,11 @@ def download_from_huggingface(
             temp_metadata = hf_hub_download(
                 repo_id=repo_id,
                 filename=metadata_filename,
-                cache_dir=get_cache_dir() / 'hf_cache',
+                cache_dir=get_cache_dir() / "hf_cache",
             )
             metadata_path = get_metadata_path(model_name)
             shutil.copy2(temp_metadata, metadata_path)
-            print(f"✓ Metadata downloaded")
+            print("✓ Metadata downloaded")
         except Exception:
             # Metadata is optional
             pass
@@ -161,11 +160,7 @@ def download_from_huggingface(
         return False
 
 
-def download_from_github(
-    model_name: str,
-    model_path: Path,
-    show_progress: bool = True
-) -> bool:
+def download_from_github(model_name: str, model_path: Path, show_progress: bool = True) -> bool:
     """
     Download model from GitHub releases.
 
@@ -180,7 +175,7 @@ def download_from_github(
     try:
         import urllib.request
 
-        url = MODEL_SOURCES[model_name]['github']
+        url = MODEL_SOURCES[model_name]["github"]
         print(f"Downloading from GitHub: {url}")
 
         def progress_hook(block_num, block_size, total_size):
@@ -190,8 +185,8 @@ def download_from_github(
             percent = min(100, downloaded * 100 / total_size)
             bar_length = 50
             filled = int(bar_length * percent / 100)
-            bar = '=' * filled + '-' * (bar_length - filled)
-            print(f'\r[{bar}] {percent:.1f}%', end='', flush=True)
+            bar = "=" * filled + "-" * (bar_length - filled)
+            print(f"\r[{bar}] {percent:.1f}%", end="", flush=True)
 
         urllib.request.urlretrieve(url, model_path, progress_hook)
         if show_progress:
@@ -199,10 +194,10 @@ def download_from_github(
 
         # Try to download metadata
         try:
-            metadata_url = url.replace('.pt', '_metadata.json')
+            metadata_url = url.replace(".pt", "_metadata.json")
             metadata_path = get_metadata_path(model_name)
             urllib.request.urlretrieve(metadata_url, metadata_path)
-            print(f"✓ Metadata downloaded")
+            print("✓ Metadata downloaded")
         except Exception:
             # Metadata is optional
             pass
@@ -214,11 +209,7 @@ def download_from_github(
         return False
 
 
-def download_model(
-    model_name: str,
-    force: bool = False,
-    source: str = 'auto'
-) -> Path:
+def download_model(model_name: str, force: bool = False, source: str = "auto") -> Path:
     """
     Download model weights if not present.
 
@@ -255,9 +246,9 @@ def download_model(
 
     # Try sources in order
     sources_to_try = []
-    if source == 'auto':
-        sources_to_try = ['huggingface', 'github']
-    elif source in ['huggingface', 'github']:
+    if source == "auto":
+        sources_to_try = ["huggingface", "github"]
+    elif source in ["huggingface", "github"]:
         sources_to_try = [source]
     else:
         raise ValueError(f"Unknown source: {source}. Use 'auto', 'huggingface', or 'github'")
@@ -267,9 +258,9 @@ def download_model(
 
     for src in sources_to_try:
         try:
-            if src == 'huggingface':
+            if src == "huggingface":
                 success = download_from_huggingface(model_name, model_path)
-            elif src == 'github':
+            elif src == "github":
                 success = download_from_github(model_name, model_path)
 
             if success:
@@ -291,7 +282,7 @@ def download_model(
     # Verify downloaded file
     if model_path.stat().st_size == 0:
         model_path.unlink()
-        raise RuntimeError(f"Downloaded file is empty")
+        raise RuntimeError("Downloaded file is empty")
 
     print(f"✓ Model downloaded to {model_path}")
     return model_path
@@ -314,7 +305,8 @@ def load_model_metadata(model_name: str) -> Optional[dict]:
 
     try:
         import json
-        with open(metadata_path, 'r') as f:
+
+        with open(metadata_path, "r") as f:
             return json.load(f)
     except Exception:
         return None
@@ -328,34 +320,32 @@ def detect_device() -> str:
         'cuda', 'mps', or 'cpu'
     """
     if torch.cuda.is_available():
-        return 'cuda'
+        return "cuda"
 
     # Check for Apple Silicon MPS
-    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return 'mps'
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
 
-    return 'cpu'
+    return "cpu"
 
 
 def get_device_info(device: str) -> dict:
     """Get information about device."""
-    info = {'device': device}
+    info = {"device": device}
 
-    if device == 'cuda':
-        info['name'] = torch.cuda.get_device_name(0)
-        info['memory_gb'] = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-    elif device == 'mps':
-        info['name'] = 'Apple Silicon (MPS)'
+    if device == "cuda":
+        info["name"] = torch.cuda.get_device_name(0)
+        info["memory_gb"] = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+    elif device == "mps":
+        info["name"] = "Apple Silicon (MPS)"
     else:
-        info['name'] = 'CPU'
+        info["name"] = "CPU"
 
     return info
 
 
 def optimize_batch_size(
-    model_name: str,
-    device: str,
-    available_memory_gb: Optional[float] = None
+    model_name: str, device: str, available_memory_gb: Optional[float] = None
 ) -> int:
     """
     Calculate optimal batch size for device.
@@ -374,13 +364,13 @@ def optimize_batch_size(
     model_info = MODEL_INFO[model_name]
 
     # Get default batch sizes
-    if device == 'cpu':
-        base_batch = model_info['default_batch_cpu']
+    if device == "cpu":
+        base_batch = model_info["default_batch_cpu"]
     else:  # cuda or mps
-        base_batch = model_info['default_batch_gpu']
+        base_batch = model_info["default_batch_gpu"]
 
         # Adjust based on available memory
-        if available_memory_gb is None and device == 'cuda':
+        if available_memory_gb is None and device == "cuda":
             available_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
 
         if available_memory_gb:
@@ -400,7 +390,7 @@ def convert_pdf_to_images(
     dpi: int = 200,
     first_page: Optional[int] = None,
     last_page: Optional[int] = None,
-    verbose: bool = True
+    verbose: bool = True,
 ) -> List[np.ndarray]:
     """
     Convert PDF pages to images.
@@ -419,8 +409,7 @@ def convert_pdf_to_images(
         from pdf2image import convert_from_path
     except ImportError:
         raise ImportError(
-            "pdf2image is required for PDF support. "
-            "Install with: pip install pdf2image"
+            "pdf2image is required for PDF support. " "Install with: pip install pdf2image"
         )
 
     pdf_path = Path(pdf_path)
@@ -435,7 +424,7 @@ def convert_pdf_to_images(
         dpi=dpi,
         first_page=first_page,
         last_page=last_page,
-        fmt='jpeg',  # Faster than PNG
+        fmt="jpeg",  # Faster than PNG
     )
 
     # Convert PIL Images to numpy arrays
@@ -462,7 +451,7 @@ def load_image(image_path: Union[str, Path]) -> np.ndarray:
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
 
-    img = Image.open(image_path).convert('RGB')
+    img = Image.open(image_path).convert("RGB")
     return np.array(img)
 
 
@@ -473,7 +462,7 @@ def save_json(data: dict, output_path: Union[str, Path]) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(data, f, indent=2)
 
 
@@ -487,7 +476,7 @@ def save_csv(data: List[dict], output_path: Union[str, Path]) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, 'w', newline='') as f:
+    with open(output_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=data[0].keys())
         writer.writeheader()
         writer.writerows(data)
@@ -508,8 +497,8 @@ def validate_model_file(model_path: Path) -> bool:
 
     try:
         # Try to load checkpoint
-        checkpoint = torch.load(model_path, map_location='cpu')
-        return isinstance(checkpoint, dict) or hasattr(checkpoint, 'forward')
+        checkpoint = torch.load(model_path, map_location="cpu")
+        return isinstance(checkpoint, dict) or hasattr(checkpoint, "forward")
     except Exception:
         return False
 
@@ -525,17 +514,17 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
     Returns:
         List of image file paths
     """
-    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
     if recursive:
         files = []
         for ext in image_extensions:
-            files.extend(directory.rglob(f'*{ext}'))
-            files.extend(directory.rglob(f'*{ext.upper()}'))
+            files.extend(directory.rglob(f"*{ext}"))
+            files.extend(directory.rglob(f"*{ext.upper()}"))
     else:
         files = []
         for ext in image_extensions:
-            files.extend(directory.glob(f'*{ext}'))
-            files.extend(directory.glob(f'*{ext.upper()}'))
+            files.extend(directory.glob(f"*{ext}"))
+            files.extend(directory.glob(f"*{ext.upper()}"))
 
     return sorted(files)

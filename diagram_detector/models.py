@@ -43,20 +43,17 @@ class DiagramDetection:
     @property
     def center(self) -> Tuple[float, float]:
         """Get detection center point."""
-        return (
-            (self.bbox[0] + self.bbox[2]) / 2,
-            (self.bbox[1] + self.bbox[3]) / 2
-        )
+        return ((self.bbox[0] + self.bbox[2]) / 2, (self.bbox[1] + self.bbox[3]) / 2)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON export."""
         return {
-            'bbox': list(self.bbox),
-            'confidence': float(self.confidence),
-            'class': self.class_name,
-            'width': float(self.width),
-            'height': float(self.height),
-            'area': float(self.area),
+            "bbox": list(self.bbox),
+            "confidence": float(self.confidence),
+            "class": self.class_name,
+            "width": float(self.width),
+            "height": float(self.height),
+            "area": float(self.area),
         }
 
 
@@ -85,11 +82,7 @@ class DetectionResult:
             self.count = 0
             self.confidence = 0.0
 
-    def get_crop(
-        self,
-        index: int = 0,
-        padding: int = 10
-    ) -> Optional[np.ndarray]:
+    def get_crop(self, index: int = 0, padding: int = 10) -> Optional[np.ndarray]:
         """
         Get cropped diagram region.
 
@@ -131,17 +124,17 @@ class DetectionResult:
             include_image: Whether to include base64-encoded image
         """
         result = {
-            'filename': self.filename,
-            'has_diagram': self.has_diagram,
-            'count': self.count,
-            'confidence': float(self.confidence),
-            'detections': [d.to_dict() for d in self.detections],
-            'image_width': self.image_width,
-            'image_height': self.image_height,
+            "filename": self.filename,
+            "has_diagram": self.has_diagram,
+            "count": self.count,
+            "confidence": float(self.confidence),
+            "detections": [d.to_dict() for d in self.detections],
+            "image_width": self.image_width,
+            "image_height": self.image_height,
         }
 
         if self.page_number is not None:
-            result['page_number'] = self.page_number
+            result["page_number"] = self.page_number
 
         if include_image and self.image is not None:
             import base64
@@ -150,31 +143,28 @@ class DetectionResult:
             # Convert to PIL Image and encode
             pil_img = Image.fromarray(self.image)
             buffer = BytesIO()
-            pil_img.save(buffer, format='JPEG')
+            pil_img.save(buffer, format="JPEG")
             img_str = base64.b64encode(buffer.getvalue()).decode()
-            result['image_base64'] = img_str
+            result["image_base64"] = img_str
 
         return result
 
     def to_csv_row(self) -> Dict[str, Any]:
         """Convert to CSV row (simplified format)."""
         row = {
-            'filename': self.filename,
-            'has_diagram': self.has_diagram,
-            'count': self.count,
-            'max_confidence': float(self.confidence),
+            "filename": self.filename,
+            "has_diagram": self.has_diagram,
+            "count": self.count,
+            "max_confidence": float(self.confidence),
         }
 
         if self.page_number is not None:
-            row['page_number'] = self.page_number
+            row["page_number"] = self.page_number
 
         return row
 
     def save_visualization(
-        self,
-        output_path: Path,
-        line_width: int = 3,
-        font_size: int = 20
+        self, output_path: Path, line_width: int = 3, font_size: int = 20
     ) -> None:
         """
         Save image with bounding boxes drawn.
@@ -197,13 +187,7 @@ class DetectionResult:
             x1, y1, x2, y2 = [int(x) for x in detection.bbox]
 
             # Draw rectangle
-            cv2.rectangle(
-                vis_img,
-                (x1, y1),
-                (x2, y2),
-                (0, 255, 0),  # Green
-                line_width
-            )
+            cv2.rectangle(vis_img, (x1, y1), (x2, y2), (0, 255, 0), line_width)  # Green
 
             # Draw confidence label
             label = f"{detection.confidence:.2f}"
@@ -214,7 +198,7 @@ class DetectionResult:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 font_size / 20.0,
                 (0, 255, 0),
-                2
+                2,
             )
 
         # Save

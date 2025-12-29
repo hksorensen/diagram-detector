@@ -11,15 +11,11 @@ Optimized for:
 
 from pathlib import Path
 from typing import List, Union, Optional, Dict
-import subprocess
-import json
-from dataclasses import dataclass
-from tqdm import tqdm
 import tempfile
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .models import DetectionResult, DiagramDetection
+from .models import DetectionResult
 from .utils import convert_pdf_to_images, save_json
 from .remote_ssh import RemoteConfig, SSHRemoteDetector
 from .cache import SQLiteResultsCache
@@ -47,7 +43,7 @@ class PDFRemoteDetector:
         self,
         config: Optional[RemoteConfig] = None,
         batch_size: int = 10,  # PDFs per batch
-        model: str = 'yolo11m',
+        model: str = "yolo11m",
         confidence: float = 0.35,
         dpi: int = 200,
         cache_dir: Optional[Path] = None,
@@ -96,15 +92,13 @@ class PDFRemoteDetector:
 
         if self.verbose:
             cache_stats = self.cache.stats()
-            print(f"Cache: {cache_stats['num_cached_pdfs']} PDFs, "
-                  f"{cache_stats['total_pages']:,} pages "
-                  f"({cache_stats['compressed_size_mb']:.1f} MB compressed)")
+            print(
+                f"Cache: {cache_stats['num_cached_pdfs']} PDFs, "
+                f"{cache_stats['total_pages']:,} pages "
+                f"({cache_stats['compressed_size_mb']:.1f} MB compressed)"
+            )
 
-    def _extract_pdf_pages(
-        self,
-        pdf_path: Path,
-        output_dir: Path
-    ) -> List[Path]:
+    def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
         """
         Extract PDF pages to images locally.
 
@@ -126,9 +120,10 @@ class PDFRemoteDetector:
         image_paths = []
 
         from PIL import Image
+
         for page_num, img_array in enumerate(images, start=1):
             img_path = output_dir / f"page_{page_num:04d}.jpg"
-            Image.fromarray(img_array).save(img_path, 'JPEG', quality=95)
+            Image.fromarray(img_array).save(img_path, "JPEG", quality=95)
             image_paths.append(img_path)
 
         if self.verbose:
@@ -137,9 +132,7 @@ class PDFRemoteDetector:
         return image_paths
 
     def _extract_pdfs_parallel(
-        self,
-        pdf_batch: List[Path],
-        batch_dir: Path
+        self, pdf_batch: List[Path], batch_dir: Path
     ) -> Dict[str, List[Path]]:
         """
         Extract multiple PDFs in parallel.
@@ -186,10 +179,7 @@ class PDFRemoteDetector:
         return pdf_images
 
     def _process_pdf_batch(
-        self,
-        pdf_batch: List[Path],
-        batch_id: str,
-        work_dir: Path
+        self, pdf_batch: List[Path], batch_id: str, work_dir: Path
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process batch of PDFs.
@@ -217,12 +207,12 @@ class PDFRemoteDetector:
 
         if self.verbose:
             print(f"  Total pages in batch: {len(all_images)}")
-            print(f"  Running inference on remote...")
+            print("  Running inference on remote...")
 
         # Run remote inference on all images
         results = self.remote_detector.detect(
             all_images,
-            output_dir=batch_dir / 'results',
+            output_dir=batch_dir / "results",
             cleanup=True,
         )
 
@@ -232,7 +222,7 @@ class PDFRemoteDetector:
 
         for pdf_path in pdf_batch:
             num_pages = pdf_page_counts[pdf_path.name]
-            pdf_result_list = results[result_idx:result_idx + num_pages]
+            pdf_result_list = results[result_idx : result_idx + num_pages]
 
             # Add page numbers
             for page_num, result in enumerate(pdf_result_list, start=1):
@@ -268,7 +258,7 @@ class PDFRemoteDetector:
         # Parse input
         if isinstance(pdf_paths, Path):
             if pdf_paths.is_dir():
-                pdf_list = sorted(pdf_paths.glob('*.pdf'))
+                pdf_list = sorted(pdf_paths.glob("*.pdf"))
             else:
                 pdf_list = [pdf_paths]
         elif isinstance(pdf_paths, list):
@@ -281,7 +271,7 @@ class PDFRemoteDetector:
 
         if self.verbose:
             print(f"\n{'='*60}")
-            print(f"PDF REMOTE INFERENCE")
+            print("PDF REMOTE INFERENCE")
             print(f"{'='*60}")
             print(f"PDFs: {len(pdf_list)}")
             print(f"Batch size: {self.batch_size} PDFs/batch")
@@ -348,8 +338,7 @@ class PDFRemoteDetector:
 
                 if self.verbose:
                     batch_diagrams = sum(
-                        sum(r.count for r in results)
-                        for results in batch_results.values()
+                        sum(r.count for r in results) for results in batch_results.values()
                     )
                     print(f"✓ Batch complete: {batch_diagrams} diagrams found")
 
@@ -370,24 +359,23 @@ class PDFRemoteDetector:
         if self.verbose:
             total_pages = sum(len(results) for results in all_results.values())
             total_with_diagrams = sum(
-                sum(1 for r in results if r.has_diagram)
-                for results in all_results.values()
+                sum(1 for r in results if r.has_diagram) for results in all_results.values()
             )
-            total_diagrams = sum(
-                sum(r.count for r in results)
-                for results in all_results.values()
-            )
+            total_diagrams = sum(sum(r.count for r in results) for results in all_results.values())
 
             print(f"\n{'='*60}")
-            print(f"PDF REMOTE INFERENCE COMPLETE")
+            print("PDF REMOTE INFERENCE COMPLETE")
             print(f"{'='*60}")
             print(f"Total PDFs: {len(all_results)}")
             print(f"Total pages: {total_pages:,}")
-            print(f"Pages with diagrams: {total_with_diagrams:,} ({total_with_diagrams/total_pages*100:.1f}%)")
+            pct = total_with_diagrams / total_pages * 100
+            print(f"Pages with diagrams: {total_with_diagrams:,} ({pct:.1f}%)")
             print(f"Total diagrams: {total_diagrams:,}")
             if use_cache:
                 cache_stats = self.cache.stats()
-                print(f"Cache: {cache_stats['num_cached_pdfs']} PDFs ({cache_stats['size_mb']:.1f} MB)")
+                num_pdfs = cache_stats["num_cached_pdfs"]
+                size_mb = cache_stats["size_mb"]
+                print(f"Cache: {num_pdfs} PDFs ({size_mb:.1f} MB)")
             print(f"{'='*60}\n")
 
         return all_results

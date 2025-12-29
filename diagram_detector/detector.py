@@ -29,11 +29,11 @@ class DiagramDetector:
 
     def __init__(
         self,
-        model: str = 'yolo11m',
+        model: str = "yolo11m",
         confidence: float = 0.20,
         iou: float = 0.30,
-        device: str = 'auto',
-        batch_size: Union[int, str] = 'auto',
+        device: str = "auto",
+        batch_size: Union[int, str] = "auto",
         verbose: bool = True,
     ):
         """
@@ -53,7 +53,7 @@ class DiagramDetector:
         self.verbose = verbose
 
         # Detect device
-        if device == 'auto':
+        if device == "auto":
             self.device = detect_device()
             if self.verbose:
                 print(f"Auto-detected device: {self.device}")
@@ -64,11 +64,11 @@ class DiagramDetector:
         if self.verbose:
             device_info = get_device_info(self.device)
             print(f"Using: {device_info['name']}")
-            if 'memory_gb' in device_info:
+            if "memory_gb" in device_info:
                 print(f"Memory: {device_info['memory_gb']:.1f} GB")
 
         # Optimize batch size
-        if batch_size == 'auto':
+        if batch_size == "auto":
             self.batch_size = optimize_batch_size(model, self.device)
             if self.verbose:
                 print(f"Auto batch size: {self.batch_size}")
@@ -79,7 +79,7 @@ class DiagramDetector:
         model_path = get_model_path(model)
         if not model_path.exists():
             if self.verbose:
-                print(f"Model not found in cache, downloading...")
+                print("Model not found in cache, downloading...")
             download_model(model)
 
         # Load model
@@ -87,6 +87,7 @@ class DiagramDetector:
             print(f"Loading {model} model...")
 
         from ultralytics import YOLO
+
         self.model = YOLO(str(model_path))
 
         if self.verbose:
@@ -136,12 +137,11 @@ class DiagramDetector:
             range(0, len(image_paths), self.batch_size),
             desc="Detecting",
             disable=not self.verbose,
-            unit="batch"
+            unit="batch",
         ):
-            batch_paths = image_paths[i:i + self.batch_size]
+            batch_paths = image_paths[i : i + self.batch_size]
             batch_results = self._detect_batch(
-                batch_paths,
-                store_images=store_images or save_crops or save_visualizations
+                batch_paths, store_images=store_images or save_crops or save_visualizations
             )
             results.extend(batch_results)
 
@@ -153,7 +153,7 @@ class DiagramDetector:
         dpi: int = 200,
         first_page: Optional[int] = None,
         last_page: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> List[DetectionResult]:
         """
         Detect diagrams in PDF.
@@ -185,21 +185,19 @@ class DiagramDetector:
         # Run detection on all pages
         results = []
 
-        for page_num, image in enumerate(tqdm(
-            images,
-            desc="Detecting",
-            disable=not self.verbose,
-            unit="page"
-        ), start=first_page or 1):
+        for page_num, image in enumerate(
+            tqdm(images, desc="Detecting", disable=not self.verbose, unit="page"),
+            start=first_page or 1,
+        ):
             # Create temporary result with image
             temp_result = self._detect_image(
                 image,
                 filename=f"{pdf_path.stem}_page{page_num}.jpg",
                 store_image=(
-                    kwargs.get('store_images', False) or
-                    kwargs.get('save_crops', False) or
-                    kwargs.get('save_visualizations', False)
-                )
+                    kwargs.get("store_images", False)
+                    or kwargs.get("save_crops", False)
+                    or kwargs.get("save_visualizations", False)
+                ),
             )
             temp_result.page_number = page_num
             results.append(temp_result)
@@ -207,9 +205,7 @@ class DiagramDetector:
         return results
 
     def _detect_batch(
-        self,
-        image_paths: List[Path],
-        store_images: bool = False
+        self, image_paths: List[Path], store_images: bool = False
     ) -> List[DetectionResult]:
         """Run inference on batch of images."""
         # Load images if needed
@@ -232,19 +228,14 @@ class DiagramDetector:
         results = []
         for i, (yolo_result, image_path) in enumerate(zip(yolo_results, image_paths)):
             result = self._parse_yolo_result(
-                yolo_result,
-                filename=image_path.name,
-                image=images[i] if images else None
+                yolo_result, filename=image_path.name, image=images[i] if images else None
             )
             results.append(result)
 
         return results
 
     def _detect_image(
-        self,
-        image: np.ndarray,
-        filename: str,
-        store_image: bool = False
+        self, image: np.ndarray, filename: str, store_image: bool = False
     ) -> DetectionResult:
         """Run inference on single image array."""
         # Run YOLO inference
@@ -257,18 +248,13 @@ class DiagramDetector:
         )
 
         result = self._parse_yolo_result(
-            yolo_results[0],
-            filename=filename,
-            image=image if store_image else None
+            yolo_results[0], filename=filename, image=image if store_image else None
         )
 
         return result
 
     def _parse_yolo_result(
-        self,
-        yolo_result,
-        filename: str,
-        image: Optional[np.ndarray] = None
+        self, yolo_result, filename: str, image: Optional[np.ndarray] = None
     ) -> DetectionResult:
         """Parse YOLO result into DetectionResult."""
         detections = []
@@ -281,10 +267,7 @@ class DiagramDetector:
                 cls_name = yolo_result.names[cls_id]
 
                 detection = DiagramDetection(
-                    bbox=tuple(bbox),
-                    confidence=conf,
-                    class_name=cls_name,
-                    class_id=cls_id
+                    bbox=tuple(bbox), confidence=conf, class_name=cls_name, class_id=cls_id
                 )
                 detections.append(detection)
 
@@ -305,10 +288,7 @@ class DiagramDetector:
         )
 
     def save_results(
-        self,
-        results: List[DetectionResult],
-        output_dir: Union[str, Path],
-        format: str = 'json'
+        self, results: List[DetectionResult], output_dir: Union[str, Path], format: str = "json"
     ) -> None:
         """
         Save detection results.
@@ -321,19 +301,19 @@ class DiagramDetector:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        if format == 'json':
+        if format == "json":
             # Save as JSON
             data = [r.to_dict() for r in results]
-            output_path = output_dir / 'detections.json'
+            output_path = output_dir / "detections.json"
             save_json(data, output_path)
 
             if self.verbose:
                 print(f"✓ Results saved to {output_path}")
 
-        elif format == 'csv':
+        elif format == "csv":
             # Save as CSV
             data = [r.to_csv_row() for r in results]
-            output_path = output_dir / 'detections.csv'
+            output_path = output_dir / "detections.csv"
             save_csv(data, output_path)
 
             if self.verbose:
@@ -343,10 +323,7 @@ class DiagramDetector:
             raise ValueError(f"Unknown format: {format}. Use 'json' or 'csv'")
 
     def save_crops(
-        self,
-        results: List[DetectionResult],
-        output_dir: Union[str, Path],
-        padding: int = 10
+        self, results: List[DetectionResult], output_dir: Union[str, Path], padding: int = 10
     ) -> None:
         """
         Extract and save cropped diagram regions.
@@ -362,10 +339,7 @@ class DiagramDetector:
         total_crops = 0
 
         for result in tqdm(
-            results,
-            desc="Extracting crops",
-            disable=not self.verbose,
-            unit="image"
+            results, desc="Extracting crops", disable=not self.verbose, unit="image"
         ):
             if not result.has_diagram or result.image is None:
                 continue
@@ -381,17 +355,15 @@ class DiagramDetector:
 
                     # Save crop
                     from PIL import Image
-                    Image.fromarray(crop).save(crop_path, 'JPEG', quality=95)
+
+                    Image.fromarray(crop).save(crop_path, "JPEG", quality=95)
                     total_crops += 1
 
         if self.verbose:
             print(f"✓ Saved {total_crops} diagram crops to {output_dir}")
 
     def save_visualizations(
-        self,
-        results: List[DetectionResult],
-        output_dir: Union[str, Path],
-        line_width: int = 3
+        self, results: List[DetectionResult], output_dir: Union[str, Path], line_width: int = 3
     ) -> None:
         """
         Save images with bounding boxes drawn.
@@ -405,10 +377,7 @@ class DiagramDetector:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         for result in tqdm(
-            results,
-            desc="Creating visualizations",
-            disable=not self.verbose,
-            unit="image"
+            results, desc="Creating visualizations", disable=not self.verbose, unit="image"
         ):
             if not result.has_diagram or result.image is None:
                 continue
