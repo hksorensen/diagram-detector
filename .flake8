@@ -2,5 +2,6 @@
 max-line-length = 100
 # W503/W504: Line breaks around binary operators (PEP 8 recommends before, not after)
 # E203: Whitespace before ':' (black formats slices this way)
-ignore = W503,W504,E203
+# E226: Missing whitespace around arithmetic operator (black doesn't always fix this)
+ignore = W503,W504,E203,E226
 exclude = .git,__pycache__,build,dist,*.egg-info
