@@ -257,11 +257,28 @@ class DiagramDetector:
         self, yolo_result, filename: str, image: Optional[np.ndarray] = None
     ) -> DetectionResult:
         """Parse YOLO result into DetectionResult."""
+        # Get image dimensions first (needed for clamping)
+        if image is not None:
+            height, width = image.shape[:2]
+        elif yolo_result.orig_shape is not None:
+            height, width = yolo_result.orig_shape
+        else:
+            height, width = 0, 0
+
         detections = []
 
         if yolo_result.boxes is not None and len(yolo_result.boxes) > 0:
             for box in yolo_result.boxes:
                 bbox = box.xyxy[0].cpu().numpy().tolist()
+
+                # Clamp coordinates to valid range [0, width/height]
+                # This prevents negative coordinates or coordinates beyond image bounds
+                if width > 0 and height > 0:
+                    bbox[0] = max(0.0, min(bbox[0], float(width)))   # x1
+                    bbox[1] = max(0.0, min(bbox[1], float(height)))  # y1
+                    bbox[2] = max(0.0, min(bbox[2], float(width)))   # x2
+                    bbox[3] = max(0.0, min(bbox[3], float(height)))  # y2
+
                 conf = float(box.conf[0].cpu().numpy())
                 cls_id = int(box.cls[0].cpu().numpy())
                 cls_name = yolo_result.names[cls_id]
@@ -270,14 +287,6 @@ class DiagramDetector:
                     bbox=tuple(bbox), confidence=conf, class_name=cls_name, class_id=cls_id
                 )
                 detections.append(detection)
-
-        # Get image dimensions
-        if image is not None:
-            height, width = image.shape[:2]
-        elif yolo_result.orig_shape is not None:
-            height, width = yolo_result.orig_shape
-        else:
-            height, width = 0, 0
 
         return DetectionResult(
             filename=filename,

@@ -9,6 +9,15 @@ from tqdm.auto import tqdm
 
 # Model information
 MODEL_INFO = {
+    "v5": {
+        "size_mb": 5.2,
+        "params": "2.6M",
+        "default_batch_cpu": 8,
+        "default_batch_gpu": 64,
+        "recommended_confidence": 0.20,
+        "recommended_iou": 0.30,
+        "description": "v5 clean dataset model - optimized for diagram counting",
+    },
     "yolo11n": {
         "size_mb": 6,
         "params": "2.6M",
@@ -391,6 +400,7 @@ def convert_pdf_to_images(
     first_page: Optional[int] = None,
     last_page: Optional[int] = None,
     verbose: bool = True,
+    grayscale: bool = True,
 ) -> List[np.ndarray]:
     """
     Convert PDF pages to images.
@@ -401,9 +411,10 @@ def convert_pdf_to_images(
         first_page: First page to convert (1-indexed)
         last_page: Last page to convert (1-indexed)
         verbose: Show progress messages
+        grayscale: Convert to grayscale (recommended for diagram detection)
 
     Returns:
-        List of images as numpy arrays
+        List of images as numpy arrays (RGB format, grayscale if enabled)
     """
     try:
         from pdf2image import convert_from_path
@@ -417,7 +428,8 @@ def convert_pdf_to_images(
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     if verbose:
-        print(f"Converting PDF to images (DPI={dpi})...")
+        mode_str = "grayscale" if grayscale else "RGB"
+        print(f"Converting PDF to images (DPI={dpi}, {mode_str})...")
 
     images = convert_from_path(
         pdf_path,
@@ -430,20 +442,24 @@ def convert_pdf_to_images(
     # Convert PIL Images to numpy arrays
     np_images = []
     for img in tqdm(images, desc="Converting pages", unit="page"):
+        if grayscale:
+            # Convert to grayscale, then back to RGB (YOLO expects 3 channels)
+            img = img.convert("L").convert("RGB")
         np_images.append(np.array(img))
 
     return np_images
 
 
-def load_image(image_path: Union[str, Path]) -> np.ndarray:
+def load_image(image_path: Union[str, Path], grayscale: bool = True) -> np.ndarray:
     """
     Load image from file.
 
     Args:
         image_path: Path to image file
+        grayscale: Convert to grayscale (recommended for diagram detection)
 
     Returns:
-        Image as numpy array (RGB)
+        Image as numpy array (RGB format, grayscale if enabled)
     """
     from PIL import Image
 
@@ -451,7 +467,12 @@ def load_image(image_path: Union[str, Path]) -> np.ndarray:
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
 
-    img = Image.open(image_path).convert("RGB")
+    img = Image.open(image_path)
+    if grayscale:
+        # Convert to grayscale, then back to RGB (YOLO expects 3 channels)
+        img = img.convert("L").convert("RGB")
+    else:
+        img = img.convert("RGB")
     return np.array(img)
 
 
