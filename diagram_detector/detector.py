@@ -93,6 +93,153 @@ class DiagramDetector:
         if self.verbose:
             print("✓ Model loaded")
 
+    @classmethod
+    def from_config(cls, config_path: Union[str, Path]) -> "DiagramDetector":
+        """
+        Create DiagramDetector from YAML configuration file.
+
+        Args:
+            config_path: Path to YAML config file
+
+        Returns:
+            DiagramDetector instance configured from file
+
+        Example config.yaml:
+            detector:
+              model: v5
+              confidence: 0.20
+              iou: 0.30
+              device: auto
+              batch_size: auto
+              verbose: true
+        """
+        import yaml
+
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        if "detector" not in config:
+            raise ValueError(
+                f"Config file missing 'detector' section. "
+                f"Expected format:\n"
+                f"detector:\n"
+                f"  model: v5\n"
+                f"  confidence: 0.20\n"
+                f"  ..."
+            )
+
+        detector_config = config["detector"]
+
+        # Create instance with config values
+        return cls(
+            model=detector_config.get("model", "yolo11m"),
+            confidence=detector_config.get("confidence", 0.20),
+            iou=detector_config.get("iou", 0.30"),
+            device=detector_config.get("device", "auto"),
+            batch_size=detector_config.get("batch_size", "auto"),
+            verbose=detector_config.get("verbose", True),
+        )
+
+    @classmethod
+    def run_from_config(cls, config_path: Union[str, Path]) -> List[DetectionResult]:
+        """
+        Run complete detection workflow from YAML configuration.
+
+        This method handles the full pipeline: load config, detect, save results/crops/viz.
+
+        Args:
+            config_path: Path to YAML config file
+
+        Returns:
+            List of DetectionResult objects
+
+        Example config.yaml:
+            detector:
+              model: v5
+              confidence: 0.20
+              iou: 0.30
+              device: auto
+
+            paths:
+              input: /path/to/pdfs
+              output: /path/to/results
+              detections: detections.json
+              crops: crops/
+              visualizations: visualizations/
+
+            options:
+              dpi: 300
+              save_crops: true
+              save_visualizations: false
+              crop_padding: 10
+              format: json
+        """
+        import yaml
+
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        # Create detector
+        detector = cls.from_config(config_path)
+
+        # Get paths config
+        if "paths" not in config:
+            raise ValueError("Config file missing 'paths' section")
+
+        paths = config["paths"]
+        input_path = Path(paths["input"])
+        output_dir = Path(paths.get("output", "results"))
+
+        # Get options
+        options = config.get("options", {})
+        dpi = options.get("dpi", 200)
+        save_crops = options.get("save_crops", False)
+        save_viz = options.get("save_visualizations", False)
+        crop_padding = options.get("crop_padding", 10)
+        output_format = options.get("format", "json")
+
+        # Run detection
+        if input_path.is_file() and input_path.suffix.lower() == ".pdf":
+            results = detector.detect_pdf(
+                input_path,
+                dpi=dpi,
+                store_images=save_crops or save_viz,
+            )
+        else:
+            results = detector.detect(
+                input_path,
+                store_images=save_crops or save_viz,
+            )
+
+        # Save results
+        if output_format in ["json", "both"]:
+            detector.save_results(results, output_dir, format="json")
+
+        if output_format in ["csv", "both"]:
+            detector.save_results(results, output_dir, format="csv")
+
+        # Save crops if requested
+        if save_crops:
+            crops_path = paths.get("crops", "crops")
+            crops_dir = output_dir / crops_path if not Path(crops_path).is_absolute() else Path(crops_path)
+            detector.save_crops(results, crops_dir, padding=crop_padding)
+
+        # Save visualizations if requested
+        if save_viz:
+            viz_path = paths.get("visualizations", "visualizations")
+            viz_dir = output_dir / viz_path if not Path(viz_path).is_absolute() else Path(viz_path)
+            detector.save_visualizations(results, viz_dir)
+
+        return results
+
     def detect(
         self,
         input_path: Union[str, Path, List[str], List[Path]],
@@ -307,8 +454,22 @@ class DiagramDetector:
             output_dir: Output directory
             format: Output format ('json' or 'csv')
         """
+        import os
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Warn if using relative path
+        if not output_dir.is_absolute() and self.verbose:
+            print(f"⚠️  Using relative output path: {output_dir} (CWD: {os.getcwd()})")
+
+        # Validate output directory is writable
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            raise PermissionError(
+                f"Cannot create or write to output directory: {output_dir}\n"
+                f"Error: {e}\n"
+                f"Fix: Check directory permissions or choose a different output path."
+            ) from e
 
         if format == "json":
             # Save as JSON
@@ -341,16 +502,47 @@ class DiagramDetector:
             results: List of DetectionResult objects
             output_dir: Output directory
             padding: Pixels to add around bbox
+
+        Raises:
+            ValueError: If results contain diagrams but images were not stored during detection
         """
+        import os
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Warn if using relative path
+        if not output_dir.is_absolute() and self.verbose:
+            print(f"⚠️  Using relative output path: {output_dir} (CWD: {os.getcwd()})")
+
+        # Validate output directory is writable
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            raise PermissionError(
+                f"Cannot create or write to output directory: {output_dir}\n"
+                f"Error: {e}\n"
+                f"Fix: Check directory permissions or choose a different output path."
+            ) from e
+
+        # Check if any results have diagrams without stored images
+        diagrams_without_images = [
+            r.filename for r in results if r.has_diagram and r.image is None
+        ]
+
+        if diagrams_without_images:
+            raise ValueError(
+                f"Cannot save crops: {len(diagrams_without_images)} result(s) have diagrams but images were not stored.\n"
+                f"Fix: Pass store_images=True when calling detect() or detect_pdf().\n"
+                f"Examples: detector.detect(path, store_images=True)\n"
+                f"          detector.detect_pdf(path, store_images=True)\n"
+                f"First few files affected: {diagrams_without_images[:3]}"
+            )
 
         total_crops = 0
 
         for result in tqdm(
             results, desc="Extracting crops", disable=not self.verbose, unit="image"
         ):
-            if not result.has_diagram or result.image is None:
+            if not result.has_diagram:
                 continue
 
             # Extract each diagram
@@ -381,14 +573,45 @@ class DiagramDetector:
             results: List of DetectionResult objects
             output_dir: Output directory
             line_width: Thickness of bbox lines
+
+        Raises:
+            ValueError: If results contain diagrams but images were not stored during detection
         """
+        import os
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Warn if using relative path
+        if not output_dir.is_absolute() and self.verbose:
+            print(f"⚠️  Using relative output path: {output_dir} (CWD: {os.getcwd()})")
+
+        # Validate output directory is writable
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            raise PermissionError(
+                f"Cannot create or write to output directory: {output_dir}\n"
+                f"Error: {e}\n"
+                f"Fix: Check directory permissions or choose a different output path."
+            ) from e
+
+        # Check if any results have diagrams without stored images
+        diagrams_without_images = [
+            r.filename for r in results if r.has_diagram and r.image is None
+        ]
+
+        if diagrams_without_images:
+            raise ValueError(
+                f"Cannot save visualizations: {len(diagrams_without_images)} result(s) have diagrams but images were not stored.\n"
+                f"Fix: Pass store_images=True when calling detect() or detect_pdf().\n"
+                f"Examples: detector.detect(path, store_images=True)\n"
+                f"          detector.detect_pdf(path, store_images=True)\n"
+                f"First few files affected: {diagrams_without_images[:3]}"
+            )
 
         for result in tqdm(
             results, desc="Creating visualizations", disable=not self.verbose, unit="image"
         ):
-            if not result.has_diagram or result.image is None:
+            if not result.has_diagram:
                 continue
 
             vis_path = output_dir / result.filename
