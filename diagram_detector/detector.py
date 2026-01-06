@@ -150,7 +150,7 @@ class DiagramDetector:
         return cls(
             model=detector_config.get("model", "yolo11m"),
             confidence=detector_config.get("confidence", 0.20),
-            iou=detector_config.get("iou", 0.30"),
+            iou=detector_config.get("iou", 0.30),
             device=detector_config.get("device", "auto"),
             batch_size=detector_config.get("batch_size", "auto"),
             verbose=detector_config.get("verbose", True),

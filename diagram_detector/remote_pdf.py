@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .models import DetectionResult
 from .utils import convert_pdf_to_images, save_json
 from .remote_ssh import RemoteConfig, SSHRemoteDetector
-from .cache import SQLiteResultsCache
+from .cache import DetectionCache
 
 
 class PDFRemoteDetector:
@@ -87,15 +87,15 @@ class PDFRemoteDetector:
             verbose=False,  # We'll handle progress output
         )
 
-        # Initialize SQLite cache with gzip compression
-        self.cache = SQLiteResultsCache(cache_dir)
+        # Initialize cache with proper parameter tracking
+        self.cache = DetectionCache(cache_dir=cache_dir, compression=True)
 
         if self.verbose:
             cache_stats = self.cache.stats()
             print(
-                f"Cache: {cache_stats['num_cached_pdfs']} PDFs, "
+                f"Cache: {cache_stats['num_pdfs']} PDFs, "
                 f"{cache_stats['total_pages']:,} pages "
-                f"({cache_stats['compressed_size_mb']:.1f} MB compressed)"
+                f"({cache_stats['size_mb']:.1f} MB compressed)"
             )
 
     def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
@@ -289,7 +289,13 @@ class PDFRemoteDetector:
                 print("Checking cache...")
 
             for pdf_path in pdf_list:
-                cached = self.cache.get(pdf_path)
+                cached = self.cache.get(
+                    pdf_path,
+                    model=self.model,
+                    confidence=self.confidence,
+                    iou=0.30,  # Default IOU (not exposed in PDFRemoteDetector API)
+                    dpi=self.dpi,
+                )
                 if cached is not None:
                     cached_results[pdf_path.name] = cached
                     if self.verbose:
@@ -331,7 +337,14 @@ class PDFRemoteDetector:
                 # Cache results
                 if use_cache:
                     for pdf_path in batch_pdfs:
-                        self.cache.set(pdf_path, batch_results[pdf_path.name])
+                        self.cache.set(
+                            pdf_path,
+                            model=self.model,
+                            confidence=self.confidence,
+                            iou=0.30,  # Default IOU
+                            dpi=self.dpi,
+                            results=batch_results[pdf_path.name],
+                        )
 
                 # Add to results
                 all_results.update(batch_results)
@@ -373,7 +386,7 @@ class PDFRemoteDetector:
             print(f"Total diagrams: {total_diagrams:,}")
             if use_cache:
                 cache_stats = self.cache.stats()
-                num_pdfs = cache_stats["num_cached_pdfs"]
+                num_pdfs = cache_stats["num_pdfs"]
                 size_mb = cache_stats["size_mb"]
                 print(f"Cache: {num_pdfs} PDFs ({size_mb:.1f} MB)")
             print(f"{'='*60}\n")
