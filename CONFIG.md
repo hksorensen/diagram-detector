@@ -278,6 +278,415 @@ Output structure:
     └── paper2_page1.jpg
 ```
 
+## Caching System
+
+The diagram-detector package includes a built-in SQLite-based caching system that dramatically speeds up repeated processing of the same PDFs with the same parameters.
+
+### How Caching Works
+
+**Cache Key**: Results are cached using a composite key that includes:
+- PDF metadata: filename, file size, modification time
+- Detection parameters: model, confidence, iou, dpi
+
+This means:
+- ✅ Same PDF + same parameters = cache hit (fast!)
+- ❌ Same PDF + different parameters = cache miss (reprocesses)
+- ❌ Modified PDF (even same name) = cache miss (detects change)
+
+**Example:**
+
+```python
+detector = DiagramDetector(model="v5", confidence=0.20)
+
+# First run: processes PDF, saves to cache
+results1 = detector.detect_pdf("paper.pdf")  # ~30 seconds
+
+# Second run: loads from cache
+results2 = detector.detect_pdf("paper.pdf")  # ~0.1 seconds ⚡
+
+# Different parameters: cache miss, reprocesses
+detector2 = DiagramDetector(model="yolo11l", confidence=0.35)
+results3 = detector2.detect_pdf("paper.pdf")  # ~30 seconds (cache miss)
+```
+
+### Configuring Cache Behavior
+
+**Programmatic Usage:**
+
+```python
+from diagram_detector import DiagramDetector, DetectionCache
+
+# Option 1: Use default cache (recommended)
+detector = DiagramDetector(cache=True)  # Default
+
+# Option 2: Disable cache
+detector = DiagramDetector(cache=False)
+
+# Option 3: Custom cache location
+custom_cache = DetectionCache(
+    cache_dir="/path/to/my/cache",
+    compression=True,
+    auto_cleanup=True,
+    max_size_mb=1000  # 1GB limit
+)
+detector = DiagramDetector(cache=custom_cache)
+
+# Option 4: Shared cache across multiple detectors
+cache = DetectionCache()
+detector1 = DiagramDetector(model="v5", cache=cache)
+detector2 = DiagramDetector(model="yolo11l", cache=cache)
+```
+
+**Config File:**
+
+```yaml
+# Caching is enabled by default
+detector:
+  model: v5
+  confidence: 0.20
+  # cache: true  # Implicit default
+
+# To disable caching
+detector:
+  model: v5
+  cache: false
+```
+
+**Per-Call Override:**
+
+```python
+# Disable cache for one call (e.g., force reprocessing)
+results = detector.detect_pdf("paper.pdf", use_cache=False)
+
+# Force reprocessing even if cached
+# (Not currently supported - use use_cache=False instead)
+```
+
+### Cache Location
+
+**Default Locations:**
+
+- macOS: `~/Library/Caches/diagram-detector/`
+- Linux: `~/.cache/diagram-detector/`
+- Windows: `%LOCALAPPDATA%\diagram-detector\cache\`
+
+**Custom Location:**
+
+```python
+cache = DetectionCache(cache_dir="/my/project/cache")
+detector = DiagramDetector(cache=cache)
+```
+
+**Important:** All detectors sharing the same cache directory will share cached results (as long as parameters match).
+
+### Cache Statistics
+
+```python
+from diagram_detector import DiagramDetector
+
+detector = DiagramDetector()
+
+# Get cache stats
+stats = detector.cache.stats()
+print(f"Cached PDFs: {stats['num_pdfs']}")
+print(f"Total pages: {stats['total_pages']:,}")
+print(f"Cache size: {stats['size_mb']:.1f} MB")
+print(f"Cache compression: ~{stats['compression_ratio']:.1f}x")
+
+# Example output:
+# Cached PDFs: 1,247
+# Total pages: 18,392
+# Cache size: 89.3 MB
+# Cache compression: ~12x
+```
+
+### Cache Management
+
+**Clear Cache:**
+
+```python
+# Clear entire cache
+detector.cache.clear()
+
+# Or manually
+from diagram_detector import DetectionCache
+cache = DetectionCache()
+cache.clear()
+```
+
+**Automatic Cleanup:**
+
+The cache supports automatic size-based cleanup using LRU (Least Recently Used) eviction:
+
+```python
+cache = DetectionCache(
+    auto_cleanup=True,
+    max_size_mb=1000  # Keep cache under 1GB
+)
+
+# When cache exceeds 1GB, least recently accessed entries are removed
+```
+
+**Manual Inspection:**
+
+```bash
+# Find cache database
+ls -lh ~/Library/Caches/diagram-detector/
+
+# Inspect with sqlite3
+sqlite3 ~/Library/Caches/diagram-detector/detection_cache.db
+
+sqlite> SELECT
+    pdf_name,
+    model,
+    confidence,
+    num_pages,
+    datetime(cached_at) as cached,
+    access_count
+FROM detection_cache
+ORDER BY last_accessed DESC
+LIMIT 10;
+```
+
+### Cache Database Schema
+
+The cache uses SQLite with the following schema:
+
+```sql
+CREATE TABLE detection_cache (
+    -- Composite cache key (SHA-256)
+    cache_key TEXT PRIMARY KEY,
+
+    -- PDF metadata
+    pdf_name TEXT NOT NULL,
+    pdf_size INTEGER NOT NULL,
+    pdf_mtime REAL NOT NULL,
+
+    -- Detection parameters
+    model TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    iou REAL NOT NULL,
+    dpi INTEGER NOT NULL,
+
+    -- Results
+    num_pages INTEGER NOT NULL,
+    results_compressed BLOB NOT NULL,  -- Gzipped JSON
+    compressed_size INTEGER NOT NULL,
+
+    -- Cache metadata
+    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    access_count INTEGER DEFAULT 0
+);
+
+-- Indexes for efficient lookups
+CREATE INDEX idx_pdf_name ON detection_cache(pdf_name);
+CREATE INDEX idx_last_accessed ON detection_cache(last_accessed);
+```
+
+### When Cache is Invalidated
+
+The cache automatically detects changes and invalidates entries when:
+
+1. **PDF modified**: File modification time changes
+2. **PDF size changes**: File size different
+3. **Parameters change**: Different model, confidence, iou, or dpi
+
+**Example:**
+
+```python
+detector = DiagramDetector(model="v5", confidence=0.20)
+
+# First run: caches results
+results = detector.detect_pdf("paper.pdf")
+
+# Edit the PDF file
+# ... modify paper.pdf ...
+
+# Next run: detects change, reprocesses
+results = detector.detect_pdf("paper.pdf")  # Cache miss due to mtime change
+```
+
+### Performance Characteristics
+
+**Without Cache:**
+- PDF extraction: ~20-50ms per page
+- Model inference: ~50-200ms per page
+- **Total: ~70-250ms per page**
+
+**With Cache (hit):**
+- SQLite lookup: ~1-5ms
+- Gzip decompression: ~10-30ms
+- **Total: ~11-35ms per page (10-20x faster!) ⚡**
+
+**Cache Overhead (miss):**
+- Gzip compression: ~5-10ms
+- SQLite insert: ~2-5ms
+- **Total overhead: ~7-15ms (negligible)**
+
+**Storage Efficiency:**
+
+Typical compression ratios with gzip:
+- Detection results (JSON): ~10-15x compression
+- Large PDFs (100+ pages): ~12-18x compression
+- Average: **~70-90% space savings**
+
+Example:
+- 1,000 PDFs, 15,000 pages
+- Uncompressed: ~1.2 GB
+- Compressed cache: **~120 MB**
+
+### Thread Safety
+
+The cache is **fully thread-safe** for concurrent access:
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+from diagram_detector import DiagramDetector
+
+# Shared cache across threads
+detector = DiagramDetector()
+
+pdf_files = list(Path("pdfs").glob("*.pdf"))
+
+# Process in parallel - cache handles concurrent access safely
+with ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(detector.detect_pdf, pdf_files))
+```
+
+**Implementation:**
+- Thread-local SQLite connections
+- WAL (Write-Ahead Logging) mode enabled
+- Automatic connection pooling
+- No manual locking required
+
+### Remote Detection Caching
+
+The cache also works with remote detection:
+
+```python
+from diagram_detector import PDFRemoteDetector
+
+# Remote detector with caching
+remote = PDFRemoteDetector(
+    config=None,  # Uses default thinkcentre.local
+    model="yolo11m",
+    confidence=0.35
+)
+
+# First run: extracts locally, runs inference remotely, caches results
+results = remote.detect_pdfs("papers/", use_cache=True)
+
+# Second run: loads from cache (no remote call!)
+results = remote.detect_pdfs("papers/", use_cache=True)  # ⚡ Instant
+```
+
+### Best Practices
+
+1. **Enable caching by default**
+   ```python
+   # Good (default)
+   detector = DiagramDetector()
+
+   # Avoid disabling unless testing
+   detector = DiagramDetector(cache=False)
+   ```
+
+2. **Use shared cache for related projects**
+   ```python
+   # All scripts in project share cache
+   CACHE_DIR = Path(__file__).parent / "cache"
+   cache = DetectionCache(cache_dir=CACHE_DIR)
+   detector = DiagramDetector(cache=cache)
+   ```
+
+3. **Set size limits for long-running processes**
+   ```python
+   # Prevent unbounded growth
+   cache = DetectionCache(
+       auto_cleanup=True,
+       max_size_mb=2000  # 2GB limit
+   )
+   ```
+
+4. **Clear cache when changing model weights**
+   ```python
+   # After retraining model
+   detector.cache.clear()
+   ```
+
+5. **Monitor cache statistics**
+   ```python
+   # Periodically check cache health
+   stats = detector.cache.stats()
+   if stats['size_mb'] > 5000:  # >5GB
+       print("⚠️  Large cache, consider cleanup")
+   ```
+
+6. **Use appropriate cache location**
+   - **Development**: Project-local cache for isolation
+   - **Production**: System cache for sharing across pipelines
+   - **Cluster/HPC**: Shared network cache (future: MySQL backend)
+
+### Debugging Cache Issues
+
+**Check if cache is being used:**
+
+```python
+detector = DiagramDetector(verbose=True)
+
+# First run:
+results = detector.detect_pdf("paper.pdf")
+# Output: "Processing 15 pages..." (no cache message)
+
+# Second run:
+results = detector.detect_pdf("paper.pdf")
+# Output: "✓ Loaded 15 pages from cache" (cache hit!)
+```
+
+**Force cache bypass:**
+
+```python
+# Temporarily disable cache
+results = detector.detect_pdf("paper.pdf", use_cache=False)
+```
+
+**Inspect cache for specific PDF:**
+
+```python
+from pathlib import Path
+
+pdf_path = Path("paper.pdf")
+cached_results = detector.cache.get(
+    pdf_path,
+    model=detector.model_name,
+    confidence=detector.confidence,
+    iou=detector.iou,
+    dpi=200
+)
+
+if cached_results:
+    print(f"✓ Found in cache: {len(cached_results)} pages")
+else:
+    print("✗ Not in cache")
+```
+
+**Common Issues:**
+
+1. **"Cache always misses"**
+   - Check parameters match exactly
+   - Verify PDF hasn't been modified
+   - Check if `use_cache=True` (default)
+
+2. **"Cache using too much space"**
+   - Enable auto-cleanup
+   - Set `max_size_mb` limit
+   - Run periodic `cache.clear()`
+
+3. **"Different results with cache"**
+   - This shouldn't happen! Cache key includes all parameters
+   - Report as bug if reproducible
+
 ## Error Messages
 
 ### Missing `detector` section
