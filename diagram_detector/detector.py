@@ -495,10 +495,16 @@ class DiagramDetector:
                     bbox[2] = max(0.0, min(bbox[2], float(width)))   # x2
                     bbox[3] = max(0.0, min(bbox[3], float(height)))  # y2
 
-                    # Ensure valid rectangle (x1 < x2, y1 < y2)
-                    # Skip detections with zero or negative width/height
-                    if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
-                        continue  # Skip invalid bbox
+                    # Normalize bbox coordinates: ensure x1 < x2 and y1 < y2
+                    # If inverted, swap coordinates (don't discard valid detections!)
+                    if bbox[0] > bbox[2]:
+                        bbox[0], bbox[2] = bbox[2], bbox[0]  # Swap x1 and x2
+                    if bbox[1] > bbox[3]:
+                        bbox[1], bbox[3] = bbox[3], bbox[1]  # Swap y1 and y2
+
+                    # Skip only if zero-area after normalization (degenerate box)
+                    if bbox[0] == bbox[2] or bbox[1] == bbox[3]:
+                        continue  # Skip zero-area bbox
 
                 conf = float(box.conf[0].cpu().numpy())
                 cls_id = int(box.cls[0].cpu().numpy())

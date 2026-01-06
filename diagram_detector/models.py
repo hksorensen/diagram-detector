@@ -17,7 +17,7 @@ class DiagramDetection:
     class_id: int = 0
 
     def __post_init__(self):
-        """Validate bbox coordinates."""
+        """Validate and normalize bbox coordinates."""
         if len(self.bbox) != 4:
             raise ValueError(f"bbox must have 4 coordinates, got {len(self.bbox)}")
         if not all(isinstance(x, (int, float)) for x in self.bbox):
@@ -25,14 +25,24 @@ class DiagramDetection:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be between 0 and 1, got {self.confidence}")
 
-        # Validate bbox is a valid rectangle
-        x1, y1, x2, y2 = self.bbox
-        if x1 >= x2:
-            raise ValueError(f"Invalid bbox: x1 ({x1}) must be < x2 ({x2})")
-        if y1 >= y2:
-            raise ValueError(f"Invalid bbox: y1 ({y1}) must be < y2 ({y2})")
+        # Normalize bbox: ensure x1 < x2 and y1 < y2 by swapping if needed
+        bbox_list = list(self.bbox)
+        x1, y1, x2, y2 = bbox_list
+
+        # Swap if inverted
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+
+        # Validate normalized bbox
         if x1 < 0 or y1 < 0:
             raise ValueError(f"Invalid bbox: coordinates must be >= 0, got ({x1}, {y1}, {x2}, {y2})")
+        if x1 == x2 or y1 == y2:
+            raise ValueError(f"Invalid bbox: zero-area rectangle ({x1}, {y1}, {x2}, {y2})")
+
+        # Update bbox with normalized coordinates
+        self.bbox = (x1, y1, x2, y2)
 
     @property
     def width(self) -> float:
