@@ -35,6 +35,7 @@ class DiagramDetector:
         device: str = "auto",
         batch_size: Union[int, str] = "auto",
         verbose: bool = True,
+        cache: Union[bool, "DetectionCache", None] = True,
     ):
         """
         Initialize detector.
@@ -46,11 +47,22 @@ class DiagramDetector:
             device: Device to use ('auto', 'cpu', 'cuda', 'mps')
             batch_size: Batch size for inference (int or 'auto')
             verbose: Print progress information
+            cache: Enable caching (True=default cache, False=disabled, DetectionCache=custom)
         """
         self.model_name = model
         self.confidence = confidence
         self.iou = iou
         self.verbose = verbose
+
+        # Initialize cache
+        if cache is True:
+            from .cache import DetectionCache
+            self.cache = DetectionCache(compression=True, auto_cleanup=True)
+        elif cache is False or cache is None:
+            self.cache = None
+        else:
+            # Assume it's a DetectionCache instance
+            self.cache = cache
 
         # Detect device
         if device == "auto":
@@ -300,6 +312,7 @@ class DiagramDetector:
         dpi: int = 200,
         first_page: Optional[int] = None,
         last_page: Optional[int] = None,
+        use_cache: bool = True,
         **kwargs,
     ) -> List[DetectionResult]:
         """
@@ -310,6 +323,7 @@ class DiagramDetector:
             dpi: Resolution for PDF conversion
             first_page: First page to process (1-indexed)
             last_page: Last page to process (1-indexed)
+            use_cache: Whether to use cache (default: True)
             **kwargs: Additional arguments passed to detect()
 
         Returns:
@@ -319,6 +333,47 @@ class DiagramDetector:
 
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+        # Check cache first (only if full PDF, not page ranges)
+        if use_cache and self.cache and first_page is None and last_page is None:
+            cached_results = self.cache.get(
+                pdf_path,
+                model=self.model_name,
+                confidence=self.confidence,
+                iou=self.iou,
+                dpi=dpi,
+            )
+
+            if cached_results is not None:
+                if self.verbose:
+                    print(f"✓ Loaded {len(cached_results)} pages from cache")
+
+                # Convert dicts back to DetectionResult objects
+                from .models import DetectionResult, DiagramDetection
+
+                results = []
+                for result_dict in cached_results:
+                    detections = [
+                        DiagramDetection(
+                            bbox=tuple(d["bbox"]),
+                            confidence=d["confidence"],
+                            class_name=d.get("class", "diagram"),
+                            class_id=d.get("class_id", 0),
+                        )
+                        for d in result_dict.get("detections", [])
+                    ]
+
+                    result = DetectionResult(
+                        filename=result_dict["filename"],
+                        page_number=result_dict.get("page_number"),
+                        detections=detections,
+                        image=None,  # Images not stored in cache
+                        image_width=result_dict["image_width"],
+                        image_height=result_dict["image_height"],
+                    )
+                    results.append(result)
+
+                return results
 
         if self.verbose:
             print(f"Processing PDF: {pdf_path.name}")
@@ -348,6 +403,20 @@ class DiagramDetector:
             )
             temp_result.page_number = page_num
             results.append(temp_result)
+
+        # Cache results (only if full PDF, not page ranges)
+        if use_cache and self.cache and first_page is None and last_page is None:
+            # Convert results to dicts for caching
+            results_dicts = [r.to_dict(include_image=False) for r in results]
+
+            self.cache.set(
+                pdf_path,
+                model=self.model_name,
+                confidence=self.confidence,
+                iou=self.iou,
+                dpi=dpi,
+                results=results_dicts,
+            )
 
         return results
 

@@ -15,7 +15,7 @@ from .models import DetectionResult, DiagramDetection
 from .utils import list_models, download_model
 from .remote_ssh import SSHRemoteDetector, RemoteConfig, parse_remote_string
 from .remote_pdf import PDFRemoteDetector
-from .cache import SQLiteResultsCache
+from .cache import DetectionCache
 
 __all__ = [
     "DiagramDetector",
@@ -27,6 +27,6 @@ __all__ = [
     "RemoteConfig",
     "parse_remote_string",
     "PDFRemoteDetector",
-    "SQLiteResultsCache",
+    "DetectionCache",
     "__version__",
 ]
