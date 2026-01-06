@@ -495,6 +495,11 @@ class DiagramDetector:
                     bbox[2] = max(0.0, min(bbox[2], float(width)))   # x2
                     bbox[3] = max(0.0, min(bbox[3], float(height)))  # y2
 
+                    # Ensure valid rectangle (x1 < x2, y1 < y2)
+                    # Skip detections with zero or negative width/height
+                    if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+                        continue  # Skip invalid bbox
+
                 conf = float(box.conf[0].cpu().numpy())
                 cls_id = int(box.cls[0].cpu().numpy())
                 cls_name = yolo_result.names[cls_id]

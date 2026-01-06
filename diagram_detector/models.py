@@ -25,6 +25,15 @@ class DiagramDetection:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be between 0 and 1, got {self.confidence}")
 
+        # Validate bbox is a valid rectangle
+        x1, y1, x2, y2 = self.bbox
+        if x1 >= x2:
+            raise ValueError(f"Invalid bbox: x1 ({x1}) must be < x2 ({x2})")
+        if y1 >= y2:
+            raise ValueError(f"Invalid bbox: y1 ({y1}) must be < y2 ({y2})")
+        if x1 < 0 or y1 < 0:
+            raise ValueError(f"Invalid bbox: coordinates must be >= 0, got ({x1}, {y1}, {x2}, {y2})")
+
     @property
     def width(self) -> float:
         """Get detection width."""
