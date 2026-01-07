@@ -336,9 +336,30 @@ def detect_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
 
-    # MPS is disabled due to YOLO coordinate corruption bug
-    # See: Ultralytics YOLO MPS backend returns corrupted x-coordinates
-    # Symptoms: bbox returns [y2, y1, garbage, y2] instead of [x1, y1, x2, y2]
+    # ⚠️  CRITICAL: MPS IS DISABLED DUE TO ULTRALYTICS YOLO BUG ⚠️
+    #
+    # DO NOT RE-ENABLE MPS without thorough testing!
+    #
+    # Bug discovered: 2026-01-07
+    # Ultralytics version at time: 8.3.241
+    # PyTorch version at time: 2.1.0
+    #
+    # SYMPTOMS:
+    # - When device='mps', YOLO returns corrupted bounding box coordinates
+    # - Expected format: [x1, y1, x2, y2] in pixels
+    # - MPS returns: [y2, y1, garbage, y2] or similar corrupted format
+    # - Y-coordinates are correct, but X-coordinates are completely wrong
+    #
+    # TESTING BEFORE RE-ENABLING:
+    # 1. Check Ultralytics YOLO changelog for MPS coordinate fixes
+    # 2. Test with known PDF that shows the bug (see git history for test files)
+    # 3. Compare MPS output vs CPU output - coordinates must match exactly
+    # 4. Test on multiple PDFs/images to ensure consistent behavior
+    #
+    # REFERENCE:
+    # - See commit 7d008fc for bug discovery and test cases
+    # - See test_device_bug.py for reproduction script
+    #
     # if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     #     return "mps"
 
