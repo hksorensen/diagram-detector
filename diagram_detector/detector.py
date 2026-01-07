@@ -36,23 +36,44 @@ class DiagramDetector:
         batch_size: Union[int, str] = "auto",
         verbose: bool = True,
         cache: Union[bool, "DetectionCache", None] = True,
+        imgsz: int = 640,
     ):
         """
         Initialize detector.
 
         Args:
-            model: Model name ('yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x')
+            model: Model name ('yolo11n', 'yolo11s', 'yolo11m', 'yolo11l', 'yolo11x', 'v5', etc.)
+                   OR path to a local .pt file (will be automatically installed to cache)
             confidence: Confidence threshold (0.0-1.0, default: 0.20 - optimized via grid search)
             iou: IOU threshold for NMS (0.0-1.0, default: 0.30 - optimized via grid search)
             device: Device to use ('auto', 'cpu', 'cuda', 'mps')
             batch_size: Batch size for inference (int or 'auto')
             verbose: Print progress information
             cache: Enable caching (True=default cache, False=disabled, DetectionCache=custom)
+            imgsz: Image size for preprocessing (default: 640, must match training)
+
+        Examples:
+            # Use a named model
+            detector = DiagramDetector(model='yolo11m')
+
+            # Use a local .pt file (automatically installs to cache)
+            detector = DiagramDetector(model='/path/to/my_model.pt')
+            detector = DiagramDetector(model='~/models/best.pt')
         """
-        self.model_name = model
         self.confidence = confidence
         self.iou = iou
+        self.imgsz = imgsz
         self.verbose = verbose
+
+        # Process model name early (needed for batch size optimization)
+        from pathlib import Path as PathLib
+        model_as_path = PathLib(model).expanduser()
+        if model_as_path.exists() and model_as_path.suffix == '.pt':
+            # Local .pt file - use filename as model name
+            self.model_name = model_as_path.stem
+        else:
+            # Named model
+            self.model_name = model
 
         # Initialize cache
         if cache is True:
@@ -79,24 +100,52 @@ class DiagramDetector:
             if "memory_gb" in device_info:
                 print(f"Memory: {device_info['memory_gb']:.1f} GB")
 
-        # Optimize batch size
+        # Optimize batch size (use model_name, not original model parameter)
         if batch_size == "auto":
-            self.batch_size = optimize_batch_size(model, self.device)
-            if self.verbose:
-                print(f"Auto batch size: {self.batch_size}")
+            # For custom/unknown models, use a conservative default
+            from .utils import MODEL_INFO
+            if self.model_name in MODEL_INFO:
+                self.batch_size = optimize_batch_size(self.model_name, self.device)
+                if self.verbose:
+                    print(f"Auto batch size: {self.batch_size}")
+            else:
+                # Unknown model - use conservative default
+                self.batch_size = 4 if self.device == "cpu" else 8
+                if self.verbose:
+                    print(f"Auto batch size (default for custom model): {self.batch_size}")
         else:
             self.batch_size = batch_size
 
-        # Download model if needed
-        model_path = get_model_path(model)
-        if not model_path.exists():
+        # Handle model loading - support both named models and local .pt files
+        if model_as_path.exists() and model_as_path.suffix == '.pt':
+            # Local .pt file provided - install it to cache
             if self.verbose:
-                print("Model not found in cache, downloading...")
-            download_model(model)
+                print(f"Installing local model from: {model_as_path}")
+
+            # Copy to cache
+            from .utils import get_cache_dir as get_cache
+            cache_dir = get_cache()
+            model_path = cache_dir / f"{self.model_name}.pt"
+
+            # Only copy if not already there or if source is newer
+            if not model_path.exists() or model_as_path.stat().st_mtime > model_path.stat().st_mtime:
+                import shutil
+                shutil.copy2(model_as_path, model_path)
+                if self.verbose:
+                    print(f"✓ Model installed to cache: {model_path}")
+            elif self.verbose:
+                print(f"✓ Model already in cache: {model_path}")
+        else:
+            # Named model - use existing download logic
+            model_path = get_model_path(self.model_name)
+            if not model_path.exists():
+                if self.verbose:
+                    print("Model not found in cache, downloading...")
+                download_model(self.model_name)
 
         # Load model
         if self.verbose:
-            print(f"Loading {model} model...")
+            print(f"Loading {self.model_name} model...")
 
         from ultralytics import YOLO
 
@@ -342,6 +391,7 @@ class DiagramDetector:
                 confidence=self.confidence,
                 iou=self.iou,
                 dpi=dpi,
+                imgsz=self.imgsz,
             )
 
             if cached_results is not None:
@@ -415,6 +465,7 @@ class DiagramDetector:
                 confidence=self.confidence,
                 iou=self.iou,
                 dpi=dpi,
+                imgsz=self.imgsz,
                 results=results_dicts,
             )
 
@@ -438,6 +489,7 @@ class DiagramDetector:
             device=self.device,
             verbose=False,
             stream=False,
+            imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
         )
 
         # Parse results
@@ -459,6 +511,7 @@ class DiagramDetector:
             source=image,
             conf=self.confidence,
             iou=self.iou,
+            imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
             device=self.device,
             verbose=False,
         )

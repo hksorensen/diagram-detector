@@ -46,6 +46,7 @@ class PDFRemoteDetector:
         model: str = "yolo11m",
         confidence: float = 0.35,
         dpi: int = 200,
+        imgsz: int = 640,
         cache_dir: Optional[Path] = None,
         parallel_extract: bool = True,
         max_workers: int = 4,
@@ -60,6 +61,7 @@ class PDFRemoteDetector:
             model: Model to use
             confidence: Confidence threshold
             dpi: DPI for PDF conversion
+            imgsz: Image size for preprocessing (default: 640, must match training)
             cache_dir: Cache directory (None = use default)
             parallel_extract: Use parallel PDF extraction
             max_workers: Number of parallel extraction workers
@@ -74,6 +76,7 @@ class PDFRemoteDetector:
         self.model = model
         self.confidence = confidence
         self.dpi = dpi
+        self.imgsz = imgsz
         self.verbose = verbose
         self.parallel_extract = parallel_extract
         self.max_workers = max_workers
@@ -295,6 +298,7 @@ class PDFRemoteDetector:
                     confidence=self.confidence,
                     iou=0.30,  # Default IOU (not exposed in PDFRemoteDetector API)
                     dpi=self.dpi,
+                    imgsz=self.imgsz,
                 )
                 if cached is not None:
                     cached_results[pdf_path.name] = cached
@@ -343,6 +347,7 @@ class PDFRemoteDetector:
                             confidence=self.confidence,
                             iou=0.30,  # Default IOU
                             dpi=self.dpi,
+                            imgsz=self.imgsz,
                             results=batch_results[pdf_path.name],
                         )
 

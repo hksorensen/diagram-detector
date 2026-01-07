@@ -137,6 +137,7 @@ class DetectionCache:
             confidence REAL NOT NULL,
             iou REAL NOT NULL,
             dpi INTEGER NOT NULL,
+            imgsz INTEGER NOT NULL,
 
             -- Results
             num_pages INTEGER NOT NULL,
@@ -166,13 +167,14 @@ class DetectionCache:
         confidence: float,
         iou: float,
         dpi: int,
+        imgsz: int,
     ) -> str:
         """
         Compute cache key including ALL detection parameters.
 
         This is critical! The cache key MUST include model, confidence,
-        iou, and dpi. Otherwise, different detection runs will incorrectly
-        reuse cached results.
+        iou, dpi, and imgsz. Otherwise, different detection runs will
+        incorrectly reuse cached results.
 
         Args:
             pdf_path: Path to PDF file
@@ -180,6 +182,7 @@ class DetectionCache:
             confidence: Confidence threshold (e.g., 0.20)
             iou: IoU threshold (e.g., 0.30)
             dpi: DPI for PDF conversion (e.g., 300)
+            imgsz: Image size for preprocessing (e.g., 640)
 
         Returns:
             SHA-256 hash of all parameters
@@ -200,6 +203,7 @@ class DetectionCache:
             f"|conf:{conf_rounded}"
             f"|iou:{iou_rounded}"
             f"|dpi:{dpi}"
+            f"|imgsz:{imgsz}"
         )
 
         return hashlib.sha256(key_data.encode()).hexdigest()
@@ -211,6 +215,7 @@ class DetectionCache:
         confidence: float,
         iou: float,
         dpi: int,
+        imgsz: int,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Get cached results for PDF with specific detection parameters.
@@ -223,11 +228,12 @@ class DetectionCache:
             confidence: Confidence threshold
             iou: IoU threshold
             dpi: DPI setting
+            imgsz: Image size for preprocessing
 
         Returns:
             List of detection results (dicts) or None if not cached
         """
-        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi)
+        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
 
         row = self.conn.query_one(
             "SELECT results_compressed, access_count FROM detection_cache WHERE cache_key = ?",
@@ -261,6 +267,7 @@ class DetectionCache:
         confidence: float,
         iou: float,
         dpi: int,
+        imgsz: int,
         results: List[Dict[str, Any]],
     ):
         """
@@ -272,9 +279,10 @@ class DetectionCache:
             confidence: Confidence threshold
             iou: IoU threshold
             dpi: DPI setting
+            imgsz: Image size for preprocessing
             results: Detection results (list of dicts from DetectionResult.to_dict())
         """
-        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi)
+        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
         stat = pdf_path.stat()
 
         # Serialize and compress
@@ -293,10 +301,10 @@ class DetectionCache:
             """
             INSERT OR REPLACE INTO detection_cache (
                 cache_key, pdf_name, pdf_size, pdf_mtime,
-                model, confidence, iou, dpi,
+                model, confidence, iou, dpi, imgsz,
                 num_pages, results_compressed, compressed_size,
                 cached_at, last_accessed, access_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cache_key,
@@ -307,6 +315,7 @@ class DetectionCache:
                 round(confidence, 3),
                 round(iou, 3),
                 dpi,
+                imgsz,
                 num_pages,
                 results_compressed,
                 compressed_size,
@@ -323,9 +332,10 @@ class DetectionCache:
         confidence: float,
         iou: float,
         dpi: int,
+        imgsz: int,
     ) -> bool:
         """Check if results are cached for given PDF and parameters."""
-        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi)
+        cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
 
         row = self.conn.query_one(
             "SELECT 1 FROM detection_cache WHERE cache_key = ?",
@@ -474,7 +484,7 @@ class DetectionCache:
         rows = self.conn.query_all(
             """
             SELECT
-                cache_key, pdf_name, model, confidence, iou, dpi,
+                cache_key, pdf_name, model, confidence, iou, dpi, imgsz,
                 num_pages, cached_at, last_accessed, access_count
             FROM detection_cache
             ORDER BY cached_at DESC
@@ -490,10 +500,11 @@ class DetectionCache:
                 "confidence": row[3],
                 "iou": row[4],
                 "dpi": row[5],
-                "num_pages": row[6],
-                "cached_at": row[7],
-                "last_accessed": row[8],
-                "access_count": row[9],
+                "imgsz": row[6],
+                "num_pages": row[7],
+                "cached_at": row[8],
+                "last_accessed": row[9],
+                "access_count": row[10],
             })
 
         with open(output_file, 'w') as f:

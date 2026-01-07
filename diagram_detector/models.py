@@ -39,7 +39,7 @@ class DiagramDetection:
         if x1 < 0 or y1 < 0:
             raise ValueError(f"Invalid bbox: coordinates must be >= 0, got ({x1}, {y1}, {x2}, {y2})")
         if x1 == x2 or y1 == y2:
-            raise ValueError(f"Invalid bbox: zero-area rectangle ({x1}, {y1}, {x2}, {y2})")
+            raise ValueError(f"Invalid bbox: zero-area rectangle ({x1}, {y1}, {x2}, {y2}) [conf={self.confidence:.2f}]")
 
         # Update bbox with normalized coordinates
         self.bbox = (x1, y1, x2, y2)
