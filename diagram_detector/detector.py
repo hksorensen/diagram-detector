@@ -549,7 +549,7 @@ class DiagramDetector:
                     bbox[3] = max(0.0, min(bbox[3], float(height)))  # y2
 
                     # Normalize bbox coordinates: ensure x1 < x2 and y1 < y2
-                    # If inverted, swap coordinates (don't discard valid detections!)
+                    # (should be rare after MPS fix above, but kept as safety check)
                     if bbox[0] > bbox[2]:
                         bbox[0], bbox[2] = bbox[2], bbox[0]  # Swap x1 and x2
                     if bbox[1] > bbox[3]:

@@ -326,14 +326,21 @@ def detect_device() -> str:
     Auto-detect best available device.
 
     Returns:
-        'cuda', 'mps', or 'cpu'
+        'cuda' or 'cpu'
+
+    Note:
+        MPS (Apple Silicon GPU) is intentionally disabled due to a critical bug in
+        Ultralytics YOLO's MPS backend that corrupts bounding box coordinates.
+        Using CPU ensures accurate results on Apple Silicon at the cost of speed.
     """
     if torch.cuda.is_available():
         return "cuda"
 
-    # Check for Apple Silicon MPS
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
+    # MPS is disabled due to YOLO coordinate corruption bug
+    # See: Ultralytics YOLO MPS backend returns corrupted x-coordinates
+    # Symptoms: bbox returns [y2, y1, garbage, y2] instead of [x1, y1, x2, y2]
+    # if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    #     return "mps"
 
     return "cpu"
 
