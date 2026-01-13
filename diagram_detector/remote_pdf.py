@@ -14,6 +14,7 @@ from typing import List, Union, Optional, Dict
 import tempfile
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict
 
 from .models import DetectionResult
 from .utils import convert_pdf_to_images, save_json
@@ -356,6 +357,10 @@ class PDFRemoteDetector:
                 # Cache results
                 if use_cache:
                     for pdf_path in batch_pdfs:
+                        # Convert DetectionResult objects to dicts for JSON serialization
+                        results_list = batch_results[pdf_path.name]
+                        results_dicts = [asdict(r) for r in results_list]
+
                         self.cache.set(
                             pdf_path,
                             model=self.model,
@@ -363,7 +368,7 @@ class PDFRemoteDetector:
                             iou=self.iou,
                             dpi=self.dpi,
                             imgsz=self.imgsz,
-                            results=batch_results[pdf_path.name],
+                            results=results_dicts,
                         )
 
                 # Add to results
