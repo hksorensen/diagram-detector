@@ -533,7 +533,6 @@ class SSHRemoteDetector:
         num_batches = (len(image_paths) + self.batch_size - 1) // self.batch_size
 
         if self.verbose:
-            print (f"self.batch_size: {self.batch_size}")
             print(f"Processing {len(image_paths):,} images in {num_batches} batch(es)...\n")
 
         # Process batches
@@ -686,16 +685,17 @@ def is_remote_available(
         config = RemoteConfig()
 
     # Build list of (host, port) combinations to try
-    combinations = [(config.host, config.port)]
+    # Always try local network first (shortest distance), then fall back to external
+    combinations = []
 
     # Add alternates for default thinkcentre server
-    if try_alternates:
-        if config.host in ["henrikkragh.dk", "thinkcentre.local"]:
-            # Try both external and local endpoints
-            if config.host == "henrikkragh.dk":
-                combinations.append(("thinkcentre.local", 22))  # Try local network
-            else:  # thinkcentre.local
-                combinations.append(("henrikkragh.dk", 8022))  # Try external
+    if try_alternates and config.host in ["henrikkragh.dk", "thinkcentre.local"]:
+        # Try local network first (fastest), then external as fallback
+        combinations.append(("thinkcentre.local", 22))  # Local network (shortest distance)
+        combinations.append(("henrikkragh.dk", 8022))   # External (fallback)
+    else:
+        # Non-default config: just try the specified host/port
+        combinations = [(config.host, config.port)]
 
     for host, port in combinations:
         try:
