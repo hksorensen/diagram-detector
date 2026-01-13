@@ -25,8 +25,8 @@ class RemoteConfig:
     host: str = "henrikkragh.dk"  # External hostname (auto-detects thinkcentre.local on LAN)
     port: int = 8022  # External port (auto-detects 22 on local network)
     user: str = "hkragh"
-    remote_work_dir: str = "~/diagram-inference"
-    python_path: str = "python3"  # Remote server uses python3
+    remote_work_dir: str = "~/diagram-detector"  # Changed to match git deployment
+    python_path: str = "~/diagram-detector/.venv/bin/python"  # Use venv python
 
     @property
     def ssh_target(self) -> str:

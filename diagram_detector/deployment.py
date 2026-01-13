@@ -394,14 +394,36 @@ def deploy_to_remote(
     if verbose:
         print(f"✓ Commit matches: {commit_hash[:12]}")
 
-    # Install on remote
+    # Ensure virtual environment exists
     if verbose:
-        print("\n5. Installing package...")
+        print("\n5. Setting up virtual environment...")
+
+    venv_path = config.remote_work_dir + "/.venv"
+    venv_setup_cmd = [
+        "ssh", "-p", str(config.port),
+        f"{config.user}@{config.host}",
+        f"cd {config.remote_work_dir} && "
+        f"(test -d .venv || python3 -m venv .venv) && "
+        f".venv/bin/pip install --upgrade pip > /dev/null 2>&1"
+    ]
+
+    result = subprocess.run(venv_setup_cmd)
+    if result.returncode != 0:
+        if verbose:
+            print("✗ Virtual environment setup failed")
+        return False
+
+    if verbose:
+        print("✓ Virtual environment ready")
+
+    # Install package in venv
+    if verbose:
+        print("\n6. Installing package...")
 
     install_cmd = [
         "ssh", "-p", str(config.port),
         f"{config.user}@{config.host}",
-        "cd ~/diagram-detector && python3 -m pip install --user -e . > /dev/null 2>&1"
+        f"cd {config.remote_work_dir} && .venv/bin/pip install -e . > /dev/null 2>&1"
     ]
 
     result = subprocess.run(install_cmd)
@@ -415,12 +437,12 @@ def deploy_to_remote(
 
     # Verify installation
     if verbose:
-        print("\n6. Verifying installation...")
+        print("\n7. Verifying installation...")
 
     verify_cmd = [
         "ssh", "-p", str(config.port),
         f"{config.user}@{config.host}",
-        "python3 -c 'import diagram_detector; print(diagram_detector.__version__)'"
+        f"cd {config.remote_work_dir} && .venv/bin/python -c 'import diagram_detector; print(diagram_detector.__version__)'"
     ]
 
     result = subprocess.run(verify_cmd, capture_output=True, text=True)
