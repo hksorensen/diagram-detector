@@ -357,6 +357,7 @@ Examples:
                 detector = PDFRemoteDetector(
                     config=remote_config,
                     batch_size=1,  # Single PDF
+                    image_batch_size=args.remote_batch_size,  # Images per upload/inference batch
                     model=args.model,
                     confidence=args.confidence,
                     dpi=args.dpi,
@@ -383,7 +384,8 @@ Examples:
 
                     detector = PDFRemoteDetector(
                         config=remote_config,
-                        batch_size=args.remote_batch_size,
+                        batch_size=10,  # PDFs per batch (reasonable default)
+                        image_batch_size=args.remote_batch_size,  # Images per upload/inference batch
                         model=args.model,
                         confidence=args.confidence,
                         dpi=args.dpi,

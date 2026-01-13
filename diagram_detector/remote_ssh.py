@@ -533,6 +533,7 @@ class SSHRemoteDetector:
         num_batches = (len(image_paths) + self.batch_size - 1) // self.batch_size
 
         if self.verbose:
+            print (f"self.batch_size: {self.batch_size}")
             print(f"Processing {len(image_paths):,} images in {num_batches} batch(es)...\n")
 
         # Process batches

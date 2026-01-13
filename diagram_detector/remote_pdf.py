@@ -45,6 +45,7 @@ class PDFRemoteDetector:
         self,
         config: Optional[RemoteConfig] = None,
         batch_size: int = 10,  # PDFs per batch
+        image_batch_size: int = 500,  # Images per upload/inference batch
         model: str = "yolo11m",
         confidence: float = 0.35,
         iou: float = 0.30,
@@ -63,6 +64,8 @@ class PDFRemoteDetector:
         Args:
             config: Remote configuration (None = use defaults for henrikkragh.dk)
             batch_size: PDFs per batch (10 = ~100-200 pages, good for gigabit LAN)
+            image_batch_size: Images per upload/inference batch (500 = good balance for gigabit LAN)
+                             Increase for faster networks, decrease for slow connections
             model: Model to use
             confidence: Confidence threshold
             iou: IoU threshold for NMS (default: 0.30, optimal from grid search)
@@ -81,6 +84,7 @@ class PDFRemoteDetector:
 
         self.config = config
         self.batch_size = batch_size
+        self.image_batch_size = image_batch_size
         self.model = model
         self.confidence = confidence
         self.iou = iou
@@ -93,12 +97,12 @@ class PDFRemoteDetector:
         # Initialize SSH detector for actual remote execution
         self.remote_detector = SSHRemoteDetector(
             config=config,
-            batch_size=1,  # We'll handle batching at PDF level
+            batch_size=image_batch_size,  # Images per upload/inference batch
             model=model,
             confidence=confidence,
             iou=iou,
             imgsz=imgsz,
-            verbose=False,  # We'll handle progress output
+            verbose=self.verbose,  # Pass through verbose flag for detailed timing
             run_id=run_id,
             config_dir=config_dir,
         )
@@ -299,7 +303,7 @@ class PDFRemoteDetector:
 
         if self.verbose:
             print(f"\n{'='*60}")
-            print("PDF REMOTE INFERENCE")
+            print("PDF REMOTE INFERENCE (detect_pdfs)")
             print(f"{'='*60}")
             print(f"PDFs: {len(pdf_list)}")
             print(f"Batch size: {self.batch_size} PDFs/batch")
@@ -347,9 +351,12 @@ class PDFRemoteDetector:
                 print("✓ All PDFs cached, no processing needed!")
             return cached_results
 
+        print (f"to_process: {to_process}")
+
         # Process in batches
         all_results = cached_results.copy()
         num_batches = (len(to_process) + self.batch_size - 1) // self.batch_size
+        print (f"num_batches: {num_batches}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             work_dir = Path(temp_dir)
@@ -364,6 +371,7 @@ class PDFRemoteDetector:
                     print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
                 # Process batch
+                print (f"batch {batch_id}: {batch_start}-{batch_end}")
                 batch_results = self._process_pdf_batch(batch_pdfs, batch_id, work_dir, auto_git_commit)
 
                 # Cache results
