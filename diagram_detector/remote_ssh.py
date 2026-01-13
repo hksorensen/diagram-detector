@@ -38,6 +38,13 @@ class RemoteConfig:
         """Get SSH port arguments."""
         return ["-p", str(self.port)] if self.port != 22 else []
 
+    @property
+    def rsync_ssh_args(self) -> List[str]:
+        """Get rsync SSH arguments (uses -e for custom SSH command)."""
+        if self.port != 22:
+            return ["-e", f"ssh -p {self.port}"]
+        return []
+
 
 class SSHRemoteDetector:
     """
@@ -314,7 +321,7 @@ class SSHRemoteDetector:
                     "-az",
                     "--progress" if self.verbose else "--quiet",
                 ]
-                + self.config.ssh_port_args
+                + self.config.rsync_ssh_args
                 + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
             )
 
@@ -389,7 +396,7 @@ class SSHRemoteDetector:
                 "-az",
                 "--progress" if self.verbose else "--quiet",
             ]
-            + self.config.ssh_port_args
+            + self.config.rsync_ssh_args
             + [f"{self.config.ssh_target}:{remote_output}", str(batch_output)]
         )
 
