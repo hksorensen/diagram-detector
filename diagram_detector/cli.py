@@ -272,6 +272,16 @@ Examples:
             config = load_config_file(config_path)
 
             # Merge config with args (CLI args take precedence)
+            # Track parser defaults to know what values weren't explicitly set
+            parser_defaults = {
+                'model': 'yolo11m',
+                'confidence': 0.35,
+                'output': 'results',
+                'device': 'auto',
+                'batch_size': None,
+                'format': 'json',
+            }
+
             for key, value in config.items():
                 # Skip nested dicts (like "remote": {"host": ..., "port": ...})
                 # These are metadata, not CLI arguments
@@ -284,8 +294,10 @@ Examples:
                 # Only set if arg wasn't explicitly provided
                 if hasattr(args, arg_name):
                     current = getattr(args, arg_name)
-                    # Set from config if it's None or still at default
-                    if current is None or (arg_name == "output" and current == "results"):
+                    default = parser_defaults.get(arg_name)
+
+                    # Set from config if it's None or still at parser default
+                    if current is None or current == default:
                         setattr(args, arg_name, value)
 
             if not args.quiet:
