@@ -691,8 +691,10 @@ def is_remote_available(
     # Add alternates for default thinkcentre server
     if try_alternates and config.host in ["henrikkragh.dk", "thinkcentre.local"]:
         # Try local network first (fastest), then external as fallback
-        combinations.append(("thinkcentre.local", 22))  # Local network (shortest distance)
-        combinations.append(("henrikkragh.dk", 8022))   # External (fallback)
+        # Use IP address for more reliable connection (.local mDNS can be flaky)
+        combinations.append(("192.168.1.183", 22))       # Local IP (most reliable)
+        combinations.append(("thinkcentre.local", 22))   # Local .local (fallback)
+        combinations.append(("henrikkragh.dk", 8022))    # External (fallback)
     else:
         # Non-default config: just try the specified host/port
         combinations = [(config.host, config.port)]
@@ -716,6 +718,13 @@ def is_remote_available(
                 config.host = host
                 config.port = port
                 return True
+            else:
+                # Connection failed - print error if verbose
+                if verbose:
+                    import errno
+                    error_msg = errno.errorcode.get(result, f"error {result}")
+                    print(f"✗ Connection failed: {error_msg}")
+                continue
 
         except socket.gaierror:
             # DNS resolution failed - continue to next combination
