@@ -1,15 +1,17 @@
 """Utility functions for diagram detection."""
 
 from pathlib import Path
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Callable
 import torch
 import numpy as np
 from tqdm.auto import tqdm
 
+import logging
+logger = logging.getLogger(__name__)
 
 # Model information
 MODEL_INFO = {
-    "v5": {
+    "diagram-detector-v5": {
         "size_mb": 5.2,
         "params": "2.6M",
         "default_batch_cpu": 8,
@@ -17,6 +19,16 @@ MODEL_INFO = {
         "recommended_confidence": 0.20,
         "recommended_iou": 0.30,
         "description": "v5 clean dataset model - optimized for diagram counting",
+    },
+    "v5": {  # Alias for backwards compatibility
+        "size_mb": 5.2,
+        "params": "2.6M",
+        "default_batch_cpu": 8,
+        "default_batch_gpu": 64,
+        "recommended_confidence": 0.20,
+        "recommended_iou": 0.30,
+        "description": "v5 clean dataset model - optimized for diagram counting (alias for diagram-detector-v5)",
+        "alias_for": "diagram-detector-v5",
     },
     "yolo11n": {
         "size_mb": 6,
@@ -51,10 +63,17 @@ MODEL_INFO = {
 }
 
 # Hugging Face Hub repository
-HF_REPO = "hksorensen/diagram-detector-models"
+HF_REPO = "hksorensen/diagram-detector-model"
 
 # GitHub release URLs (fallback)
 GITHUB_RELEASE_BASE = "https://github.com/hksorensen/diagram-detector/releases/download/v1.0.0"
+
+# Model SHA256 hashes for verification
+# To add new models: compute hash with hashlib.sha256 and add here
+MODEL_SHA256 = {
+    "v5": None,  # TODO: Add actual SHA256 hash after uploading to HF
+    # Other models will be added as they're uploaded to HuggingFace
+}
 
 # Model URLs - multiple sources for robustness
 MODEL_SOURCES = {
@@ -125,9 +144,13 @@ def download_from_huggingface(
     try:
         from huggingface_hub import hf_hub_download
 
+        # Resolve alias to actual model name on HuggingFace
+        model_info = MODEL_INFO.get(model_name, {})
+        hf_model_name = model_info.get("alias_for", model_name)
+
         # Extract repo and filename from MODEL_SOURCES
         repo_id = HF_REPO
-        filename = f"{model_name}.pt"
+        filename = f"{hf_model_name}.pt"
 
         print(f"Downloading from Hugging Face Hub: {repo_id}/{filename}")
 
@@ -146,7 +169,7 @@ def download_from_huggingface(
 
         # Also download metadata if available
         try:
-            metadata_filename = f"{model_name}_metadata.json"
+            metadata_filename = f"{hf_model_name}_metadata.json"
             temp_metadata = hf_hub_download(
                 repo_id=repo_id,
                 filename=metadata_filename,
@@ -297,6 +320,64 @@ def download_model(model_name: str, force: bool = False, source: str = "auto") -
     return model_path
 
 
+def compute_model_hash(model_path: Path) -> str:
+    """
+    Compute SHA256 hash of model file.
+
+    Args:
+        model_path: Path to model file
+
+    Returns:
+        SHA256 hex digest
+    """
+    import hashlib
+
+    hasher = hashlib.sha256()
+    with open(model_path, "rb") as f:
+        while chunk := f.read(8192):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def verify_model_hash(model_name: str, model_path: Path, raise_on_mismatch: bool = False) -> bool:
+    """
+    Verify model file matches expected SHA256 hash.
+
+    Args:
+        model_name: Model name
+        model_path: Path to model file
+        raise_on_mismatch: Raise RuntimeError if hash doesn't match
+
+    Returns:
+        True if hash matches or no hash registered, False otherwise
+
+    Raises:
+        RuntimeError: If raise_on_mismatch=True and hash doesn't match
+    """
+    # Get expected hash
+    expected_hash = MODEL_SHA256.get(model_name)
+
+    # If no hash registered, skip verification
+    if expected_hash is None:
+        return True
+
+    # Compute actual hash
+    actual_hash = compute_model_hash(model_path)
+
+    # Compare
+    matches = actual_hash == expected_hash
+
+    if not matches and raise_on_mismatch:
+        raise RuntimeError(
+            f"Model hash mismatch for {model_name}!\n"
+            f"Expected: {expected_hash}\n"
+            f"Got:      {actual_hash}\n"
+            f"This may indicate a corrupted or tampered model file."
+        )
+
+    return matches
+
+
 def load_model_metadata(model_name: str) -> Optional[dict]:
     """
     Load model metadata if available.
@@ -429,6 +510,8 @@ def convert_pdf_to_images(
     last_page: Optional[int] = None,
     verbose: bool = True,
     grayscale: bool = True,
+    show_progress: bool = True,
+    progress_bar: Optional[Callable] = None
 ) -> List[np.ndarray]:
     """
     Convert PDF pages to images.
@@ -440,7 +523,9 @@ def convert_pdf_to_images(
         last_page: Last page to convert (1-indexed)
         verbose: Show progress messages
         grayscale: Convert to grayscale (recommended for diagram detection)
-
+        show_progress: If True, show progress bar (default: True)
+        progress_bar: Optional progress bar instance to use.
+                     If provided, show_progress is ignored.
     Returns:
         List of images as numpy arrays (RGB format, grayscale if enabled)
     """
@@ -455,8 +540,8 @@ def convert_pdf_to_images(
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
+    mode_str = "grayscale" if grayscale else "RGB"
     if verbose:
-        mode_str = "grayscale" if grayscale else "RGB"
         print(f"Converting PDF to images (DPI={dpi}, {mode_str})...")
 
     images = convert_from_path(
@@ -467,13 +552,38 @@ def convert_pdf_to_images(
         fmt="jpeg",  # Faster than PNG
     )
 
-    # Convert PIL Images to numpy arrays
+    if progress_bar is not None:
+        # Case 3: Use provided progress bar
+        page_pbar = progress_bar
+        if hasattr(page_pbar, 'reset'):
+            page_pbar.reset(total=len(images))
+        image_iter = images  # Iterate over images directly
+        own_pbar = False
+    elif show_progress:
+        # Case 1: Normal tqdm - wrap images with tqdm
+        logger.debug("Creating normal tqdm progress bar")
+        image_iter = tqdm(images, desc="Converting", position=1, leave=False)
+        page_pbar = image_iter  # For closing later
+        own_pbar = True
+    else:
+        # Case 2: Silent tqdm - wrap images with tqdm (disabled)
+        image_iter = tqdm(images, desc="Converting", position=1, leave=False, disable=True)
+        page_pbar = image_iter  # For closing later
+        own_pbar = True
+    
+    # Convert PIL Images to numpy arrays (single loop for all cases)
     np_images = []
-    for img in tqdm(images, desc="Converting pages", unit="page"):
+    for img in image_iter:
         if grayscale:
             # Convert to grayscale, then back to RGB (YOLO expects 3 channels)
             img = img.convert("L").convert("RGB")
         np_images.append(np.array(img))
+        # Manual update only for Case 3 (provided progress_bar)
+        if progress_bar is not None:
+            page_pbar.update(1)
+
+    if own_pbar:
+        page_pbar.close()
 
     return np_images
 

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import List, Union, Optional
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .models import DetectionResult, DiagramDetection
 from .utils import (
@@ -19,6 +19,8 @@ from .utils import (
     get_device_info,
 )
 
+import logging
+logger = logging.getLogger(__name__)
 
 class DiagramDetector:
     """
@@ -437,8 +439,10 @@ class DiagramDetector:
         # Run detection on all pages
         results = []
 
+        # logger.info(f"Detecting {len(images)} pages")
         for page_num, image in enumerate(
-            tqdm(images, desc="Detecting", disable=not self.verbose, unit="page"),
+            tqdm(images, desc="Detecting", unit="page",
+            disable=False, total=len(images), leave=False), # WAS: disable=not self.verbose
             start=first_page or 1,
         ):
             # Create temporary result with image

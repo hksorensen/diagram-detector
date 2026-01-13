@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 import tempfile
 import shutil
+from datetime import datetime
 
 from .models import DetectionResult, DiagramDetection
 from .utils import get_image_files
@@ -21,11 +22,11 @@ from .utils import get_image_files
 class RemoteConfig:
     """Configuration for remote SSH server."""
 
-    host: str = "thinkcentre.local"
-    port: int = 22
+    host: str = "henrikkragh.dk"  # External hostname (auto-detects thinkcentre.local on LAN)
+    port: int = 8022  # External port (auto-detects 22 on local network)
     user: str = "hkragh"
     remote_work_dir: str = "~/diagram-inference"
-    python_path: str = "python"  # or path to venv python
+    python_path: str = "python3"  # Remote server uses python3
 
     @property
     def ssh_target(self) -> str:
@@ -55,7 +56,11 @@ class SSHRemoteDetector:
         batch_size: int = 1000,
         model: str = "yolo11m",
         confidence: float = 0.35,
+        iou: float = 0.30,
+        imgsz: int = 640,
         verbose: bool = True,
+        run_id: Optional[str] = None,
+        config_dir: Optional[Path] = None,
     ):
         """
         Initialize remote detector.
@@ -65,7 +70,11 @@ class SSHRemoteDetector:
             batch_size: Images per batch (1000 = ~10-20 min on GPU)
             model: Model to use on remote
             confidence: Confidence threshold
+            iou: IoU threshold for NMS (default: 0.30)
+            imgsz: Image size for preprocessing (default: 640)
             verbose: Print progress
+            run_id: Unique run identifier (auto-generated if None)
+            config_dir: Local directory to store run config YAML (for git tracking)
         """
         if isinstance(config, str):
             self.config = self._parse_connection_string(config)
@@ -75,7 +84,19 @@ class SSHRemoteDetector:
         self.batch_size = batch_size
         self.model = model
         self.confidence = confidence
+        self.iou = iou
+        self.imgsz = imgsz
         self.verbose = verbose
+
+        # Generate run ID if not provided
+        if run_id is None:
+            from datetime import datetime
+            run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        self.run_id = run_id
+
+        # Config directory for git-tracked run configs
+        self.config_dir = Path(config_dir) if config_dir else None
+        self._run_config_path = None
 
         # Verify SSH connection
         self._verify_connection()
@@ -96,6 +117,131 @@ class SSHRemoteDetector:
             port = 22
 
         return RemoteConfig(host=host, port=port, user=user)
+
+    def _create_run_config(self, gpu_batch_size: int = 32) -> Path:
+        """
+        Create run-level YAML config file (for git tracking and reproducibility).
+
+        Config is created ONCE per run and shared across all batches.
+
+        Args:
+            gpu_batch_size: GPU batch size for this run
+
+        Returns:
+            Path to created config file (local)
+        """
+        if self._run_config_path is not None:
+            return self._run_config_path
+
+        # Determine where to save config
+        if self.config_dir:
+            config_dir = self.config_dir
+        else:
+            # Default: current working directory / configs
+            config_dir = Path.cwd() / "configs"
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create config dict
+        config_data = {
+            "run_id": self.run_id,
+            "model": self.model,
+            "confidence": self.confidence,
+            "iou": self.iou,
+            "imgsz": self.imgsz,
+            "batch_size": gpu_batch_size,
+            "format": "json",
+            "created": datetime.now().isoformat(),
+            "remote": {
+                "host": self.config.host,
+                "port": self.config.port,
+                "user": self.config.user,
+            },
+        }
+
+        # Write as YAML
+        config_path = config_dir / f"{self.run_id}.yaml"
+
+        try:
+            import yaml
+            with open(config_path, "w") as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+        except ImportError:
+            # Fallback to JSON if PyYAML not available
+            import json
+            config_path = config_dir / f"{self.run_id}.json"
+            with open(config_path, "w") as f:
+                json.dump(config_data, f, indent=2)
+
+        if self.verbose:
+            print(f"✓ Run config created: {config_path}")
+            print(f"  (This config is used for ALL batches in this run)")
+
+        self._run_config_path = config_path
+        return config_path
+
+    def _commit_run_config(self, message: Optional[str] = None) -> bool:
+        """
+        Git commit the run config file (if in a git repo).
+
+        Args:
+            message: Commit message (auto-generated if None)
+
+        Returns:
+            True if committed successfully, False otherwise
+        """
+        if self._run_config_path is None:
+            return False
+
+        config_file = self._run_config_path
+
+        # Check if in git repo
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=config_file.parent,
+                capture_output=True,
+                check=True
+            )
+        except subprocess.CalledProcessError:
+            if self.verbose:
+                print(f"  ⚠ Not in a git repository, skipping auto-commit")
+            return False
+
+        # Add config file
+        try:
+            subprocess.run(
+                ["git", "add", str(config_file)],
+                cwd=config_file.parent,
+                capture_output=True,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            if self.verbose:
+                print(f"  ⚠ Failed to git add config: {e}")
+            return False
+
+        # Generate commit message
+        if message is None:
+            message = f"Add run config: {self.run_id}\n\nParameters:\n- model: {self.model}\n- confidence: {self.confidence}\n- iou: {self.iou}"
+
+        # Commit
+        try:
+            subprocess.run(
+                ["git", "commit", "-m", message],
+                cwd=config_file.parent,
+                capture_output=True,
+                check=True
+            )
+
+            if self.verbose:
+                print(f"  ✓ Config committed to git: {config_file.name}")
+
+            return True
+
+        except subprocess.CalledProcessError:
+            # Might fail if no changes (already committed) - that's ok
+            return False
 
     def _verify_connection(self) -> None:
         """Verify SSH connection works."""
@@ -181,23 +327,40 @@ class SSHRemoteDetector:
             print(f"✓ Batch {batch_id} uploaded")
 
     def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32) -> None:
-        """Run inference on batch on remote server."""
+        """Run inference on batch using run-level config."""
         if self.verbose:
             print(f"Running inference on batch {batch_id}...")
 
-        # Build remote command
+        # Create run-level config (only once per run)
+        run_config_local = self._create_run_config(gpu_batch_size)
+
+        # Remote paths
         input_dir = f"{self.config.remote_work_dir}/input/{batch_id}"
         output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"
+        remote_config_dir = f"{self.config.remote_work_dir}/configs"
+        remote_config_file = f"{remote_config_dir}/{self.run_id}.yaml"
 
+        # Upload run config to remote (idempotent - ok to upload multiple times)
+        mkdir_cmd = f"mkdir -p {remote_config_dir}"
+        self._run_ssh_command(mkdir_cmd, check=True)
+
+        scp_cmd = [
+            "scp",
+            "-P", str(self.config.port),
+            str(run_config_local),
+            f"{self.config.user}@{self.config.host}:{remote_config_file}"
+        ]
+        result = subprocess.run(scp_cmd, capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to upload config: {result.stderr.decode()}")
+
+        # Run inference with config file + override input/output for this batch
         cmd = (
             f"cd {self.config.remote_work_dir} && "
             f"{self.config.python_path} -m diagram_detector.cli "
+            f"--config {remote_config_file} "
             f"--input {input_dir} "
             f"--output {output_dir} "
-            f"--model {self.model} "
-            f"--confidence {self.confidence} "
-            f"--batch-size {gpu_batch_size} "
-            f"--format json "
             f"--quiet"
         )
 
@@ -212,8 +375,9 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"Downloading results for batch {batch_id}...")
 
-        # Create local output directory
-        batch_output = output_dir / batch_id
+        # Create local output directory (organized by run)
+        run_output = output_dir / self.run_id
+        batch_output = run_output / batch_id
         batch_output.mkdir(parents=True, exist_ok=True)
 
         # Rsync results
@@ -234,8 +398,15 @@ class SSHRemoteDetector:
         if result.returncode != 0:
             raise RuntimeError(f"Download failed: {result.stderr}")
 
+        # Copy run config to run output directory (once per run)
+        if self._run_config_path and not (run_output / "config.yaml").exists():
+            import shutil
+            shutil.copy2(self._run_config_path, run_output / "config.yaml")
+            if self.verbose:
+                print(f"  ✓ Run config copied to: {run_output / 'config.yaml'}")
+
         if self.verbose:
-            print(f"✓ Batch {batch_id} results downloaded")
+            print(f"✓ Batch {batch_id} results downloaded to: {batch_output}")
 
         return batch_output
 
@@ -244,7 +415,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"Cleaning up batch {batch_id}...")
 
-        # Remove batch directories
+        # Remove batch directories (keep run config for potential resume)
         commands = [
             f"rm -rf {self.config.remote_work_dir}/input/{batch_id}",
             f"rm -rf {self.config.remote_work_dir}/output/{batch_id}",
@@ -292,6 +463,7 @@ class SSHRemoteDetector:
         gpu_batch_size: int = 32,
         cleanup: bool = True,
         resume: bool = False,
+        auto_git_commit: bool = False,
     ) -> List[DetectionResult]:
         """
         Run remote inference on images.
@@ -302,6 +474,7 @@ class SSHRemoteDetector:
             gpu_batch_size: Batch size for GPU inference (16-64 typical)
             cleanup: Clean up remote files after processing
             resume: Resume from partially completed job
+            auto_git_commit: Automatically git commit the run config (if in git repo)
 
         Returns:
             List of DetectionResult objects
@@ -340,6 +513,13 @@ class SSHRemoteDetector:
 
         # Setup remote workspace
         self._setup_remote_workspace()
+
+        # Create run config (before first batch)
+        self._create_run_config(gpu_batch_size)
+
+        # Auto-commit config if requested
+        if auto_git_commit:
+            self._commit_run_config()
 
         # Calculate batches
         num_batches = (len(image_paths) + self.batch_size - 1) // self.batch_size
@@ -443,3 +623,131 @@ def parse_remote_string(remote_str: str) -> RemoteConfig:
         port = 22
 
     return RemoteConfig(host=host, port=port, user=user)
+
+
+def is_remote_available(
+    config: Optional[RemoteConfig] = None,
+    timeout: float = 2.0,
+    verbose: bool = False,
+    try_alternates: bool = True
+) -> bool:
+    """
+    Check if remote server is available for detection.
+
+    Tests SSH connectivity by attempting to connect to the remote server.
+    By default, tries both external (henrikkragh.dk:8022) and local (thinkcentre.local:22).
+
+    Args:
+        config: RemoteConfig to test (default: henrikkragh.dk:8022)
+        timeout: Connection timeout in seconds (default: 2.0)
+        verbose: Print status messages (default: False)
+        try_alternates: Try alternate host/port combinations (default: True)
+
+    Returns:
+        True if remote is reachable, False otherwise
+
+    Example:
+        >>> from diagram_detector.remote_ssh import is_remote_available, RemoteConfig
+        >>>
+        >>> # Check default remote (tries both external and local)
+        >>> if is_remote_available():
+        ...     print("Can use remote detection")
+        >>>
+        >>> # Check specific host only
+        >>> config = RemoteConfig(host="myserver.local", port=22)
+        >>> if is_remote_available(config, try_alternates=False):
+        ...     print("Remote available")
+    """
+    import socket
+
+    # Use default config if not provided
+    if config is None:
+        config = RemoteConfig()
+
+    # Build list of (host, port) combinations to try
+    combinations = [(config.host, config.port)]
+
+    # Add alternates for default thinkcentre server
+    if try_alternates:
+        if config.host in ["henrikkragh.dk", "thinkcentre.local"]:
+            # Try both external and local endpoints
+            if config.host == "henrikkragh.dk":
+                combinations.append(("thinkcentre.local", 22))  # Try local network
+            else:  # thinkcentre.local
+                combinations.append(("henrikkragh.dk", 8022))  # Try external
+
+    for host, port in combinations:
+        try:
+            if verbose:
+                print(f"Checking remote: {config.user}@{host}:{port}...")
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+
+            is_available = (result == 0)
+
+            if is_available:
+                if verbose:
+                    print(f"✓ Remote is available: {config.user}@{host}:{port}")
+                # Update config with working host/port
+                config.host = host
+                config.port = port
+                return True
+
+        except socket.gaierror:
+            # DNS resolution failed - continue to next combination
+            if verbose and len(combinations) == 1:
+                print(f"✗ Cannot resolve hostname: {host}")
+            continue
+        except Exception as e:
+            # Other errors - continue to next combination
+            if verbose and len(combinations) == 1:
+                print(f"✗ Error checking remote: {e}")
+            continue
+
+    # All combinations failed
+    if verbose:
+        if len(combinations) > 1:
+            print(f"✗ Remote is not reachable on any endpoint")
+        else:
+            print(f"✗ Remote is not reachable: {config.user}@{config.host}:{config.port}")
+    return False
+
+
+def get_remote_endpoint(
+    config: Optional[RemoteConfig] = None,
+    timeout: float = 2.0,
+    verbose: bool = False
+) -> Optional[RemoteConfig]:
+    """
+    Get working remote endpoint configuration.
+
+    Tests connectivity and returns a RemoteConfig with the working host/port,
+    or None if remote is not available.
+
+    Args:
+        config: RemoteConfig to test (default: auto-detect)
+        timeout: Connection timeout in seconds (default: 2.0)
+        verbose: Print status messages (default: False)
+
+    Returns:
+        RemoteConfig with working endpoint, or None if not available
+
+    Example:
+        >>> from diagram_detector.remote_ssh import get_remote_endpoint
+        >>>
+        >>> # Get working endpoint
+        >>> endpoint = get_remote_endpoint(verbose=True)
+        >>> if endpoint:
+        ...     print(f"Remote: {endpoint.user}@{endpoint.host}:{endpoint.port}")
+        ...     # Use endpoint.host and endpoint.port for connections
+    """
+    if config is None:
+        config = RemoteConfig()
+
+    if is_remote_available(config, timeout=timeout, verbose=verbose):
+        return config
+    else:
+        return None

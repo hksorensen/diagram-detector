@@ -45,36 +45,43 @@ class PDFRemoteDetector:
         batch_size: int = 10,  # PDFs per batch
         model: str = "yolo11m",
         confidence: float = 0.35,
+        iou: float = 0.30,
         dpi: int = 200,
         imgsz: int = 640,
         cache_dir: Optional[Path] = None,
         parallel_extract: bool = True,
         max_workers: int = 4,
         verbose: bool = True,
+        run_id: Optional[str] = None,
+        config_dir: Optional[Path] = None,
     ):
         """
         Initialize PDF remote detector.
 
         Args:
-            config: Remote configuration (None = use defaults for thinkcentre.local)
+            config: Remote configuration (None = use defaults for henrikkragh.dk)
             batch_size: PDFs per batch (10 = ~100-200 pages, good for gigabit LAN)
             model: Model to use
             confidence: Confidence threshold
+            iou: IoU threshold for NMS (default: 0.30, optimal from grid search)
             dpi: DPI for PDF conversion
             imgsz: Image size for preprocessing (default: 640, must match training)
             cache_dir: Cache directory (None = use default)
             parallel_extract: Use parallel PDF extraction
             max_workers: Number of parallel extraction workers
             verbose: Print progress
+            run_id: Unique run identifier (auto-generated if None)
+            config_dir: Directory to store run configs (for git tracking)
         """
         # Use default config for local network if not provided
         if config is None:
-            config = RemoteConfig()  # Uses thinkcentre.local defaults
+            config = RemoteConfig()  # Uses henrikkragh.dk defaults (auto-detects local)
 
         self.config = config
         self.batch_size = batch_size
         self.model = model
         self.confidence = confidence
+        self.iou = iou
         self.dpi = dpi
         self.imgsz = imgsz
         self.verbose = verbose
@@ -87,7 +94,11 @@ class PDFRemoteDetector:
             batch_size=1,  # We'll handle batching at PDF level
             model=model,
             confidence=confidence,
+            iou=iou,
+            imgsz=imgsz,
             verbose=False,  # We'll handle progress output
+            run_id=run_id,
+            config_dir=config_dir,
         )
 
         # Initialize cache with proper parameter tracking
@@ -182,7 +193,7 @@ class PDFRemoteDetector:
         return pdf_images
 
     def _process_pdf_batch(
-        self, pdf_batch: List[Path], batch_id: str, work_dir: Path
+        self, pdf_batch: List[Path], batch_id: str, work_dir: Path, auto_git_commit: bool = False
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process batch of PDFs.
@@ -191,6 +202,7 @@ class PDFRemoteDetector:
             pdf_batch: List of PDF paths
             batch_id: Batch identifier
             work_dir: Working directory
+            auto_git_commit: Automatically git commit the run config
 
         Returns:
             Dict mapping PDF name to results
@@ -217,6 +229,7 @@ class PDFRemoteDetector:
             all_images,
             output_dir=batch_dir / "results",
             cleanup=True,
+            auto_git_commit=auto_git_commit,
         )
 
         # Group results by PDF
@@ -245,6 +258,7 @@ class PDFRemoteDetector:
         output_dir: Optional[Path] = None,
         use_cache: bool = True,
         force_reprocess: bool = False,
+        auto_git_commit: bool = False,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -254,6 +268,7 @@ class PDFRemoteDetector:
             output_dir: Where to save results (None = don't save)
             use_cache: Use cached results if available
             force_reprocess: Force reprocessing even if cached
+            auto_git_commit: Automatically git commit the run config
 
         Returns:
             Dict mapping PDF filename to list of DetectionResult (one per page)
@@ -296,7 +311,7 @@ class PDFRemoteDetector:
                     pdf_path,
                     model=self.model,
                     confidence=self.confidence,
-                    iou=0.30,  # Default IOU (not exposed in PDFRemoteDetector API)
+                    iou=self.iou,
                     dpi=self.dpi,
                     imgsz=self.imgsz,
                 )
@@ -336,7 +351,7 @@ class PDFRemoteDetector:
                     print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
                 # Process batch
-                batch_results = self._process_pdf_batch(batch_pdfs, batch_id, work_dir)
+                batch_results = self._process_pdf_batch(batch_pdfs, batch_id, work_dir, auto_git_commit)
 
                 # Cache results
                 if use_cache:
@@ -345,7 +360,7 @@ class PDFRemoteDetector:
                             pdf_path,
                             model=self.model,
                             confidence=self.confidence,
-                            iou=0.30,  # Default IOU
+                            iou=self.iou,
                             dpi=self.dpi,
                             imgsz=self.imgsz,
                             results=batch_results[pdf_path.name],

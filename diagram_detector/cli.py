@@ -2,11 +2,114 @@
 
 import argparse
 import sys
+import json
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 from . import __version__
 from .detector import DiagramDetector
 from .utils import list_models
+
+
+def load_config_file(config_path: Path) -> Dict[str, Any]:
+    """
+    Load configuration from YAML or JSON file.
+
+    Args:
+        config_path: Path to config file (.yaml, .yml, or .json)
+
+    Returns:
+        Dict of configuration values
+
+    Raises:
+        ValueError: If file format not supported
+        FileNotFoundError: If config file doesn't exist
+    """
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    suffix = config_path.suffix.lower()
+
+    if suffix == ".json":
+        with open(config_path, "r") as f:
+            return json.load(f)
+    elif suffix in [".yaml", ".yml"]:
+        try:
+            import yaml
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f)
+        except ImportError:
+            raise ImportError(
+                "PyYAML required for YAML config files. Install with: pip install pyyaml"
+            )
+    else:
+        raise ValueError(f"Unsupported config format: {suffix}. Use .json, .yaml, or .yml")
+
+
+def merge_config_with_args(config: Dict[str, Any], args: argparse.Namespace) -> argparse.Namespace:
+    """
+    Merge config file values with CLI arguments.
+    CLI arguments take precedence over config file.
+
+    Args:
+        config: Config dict from file
+        args: Parsed CLI arguments
+
+    Returns:
+        Updated args namespace
+    """
+    # Map config keys to arg names (handle both formats)
+    key_mapping = {
+        "input": "input",
+        "output": "output",
+        "model": "model",
+        "confidence": "confidence",
+        "iou": "iou",
+        "imgsz": "imgsz",
+        "batch_size": "batch_size",
+        "batch-size": "batch_size",
+        "device": "device",
+        "dpi": "dpi",
+        "first_page": "first_page",
+        "first-page": "first_page",
+        "last_page": "last_page",
+        "last-page": "last_page",
+        "save_crops": "save_crops",
+        "save-crops": "save_crops",
+        "visualize": "visualize",
+        "format": "format",
+        "crop_padding": "crop_padding",
+        "crop-padding": "crop_padding",
+        "quiet": "quiet",
+    }
+
+    # Get default values from parser to detect which args were explicitly set
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--confidence", type=float, default=0.35)
+    parser.add_argument("--model", default="yolo11m")
+    # ... (we'll use a simpler approach)
+
+    # For each config value, set it if the CLI arg is still at default
+    for config_key, value in config.items():
+        arg_name = key_mapping.get(config_key, config_key)
+
+        # Only set from config if not explicitly provided via CLI
+        # This is a simplified check - in practice, detecting "was it provided" is tricky
+        if hasattr(args, arg_name):
+            # For required args like input/output, config can provide defaults
+            current_value = getattr(args, arg_name)
+
+            # Set from config if current value looks like a default
+            # (This is imperfect but works for most cases)
+            if arg_name in ["input", "output"]:
+                # These are required, so config must provide them if --config used alone
+                if current_value is None or config_key in config:
+                    setattr(args, arg_name, value)
+            else:
+                # For optional args, config provides defaults
+                setattr(args, arg_name, value)
+
+    return args
 
 
 def main():
@@ -33,9 +136,16 @@ Examples:
         """,
     )
 
+    # Configuration file
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Load configuration from YAML or JSON file (CLI args override config file)",
+    )
+
     # Input/output
     parser.add_argument(
-        "--input", "-i", required=True, help="Input file or directory (images or PDF)"
+        "--input", "-i", help="Input file or directory (images or PDF)"
     )
 
     parser.add_argument(
@@ -57,6 +167,20 @@ Examples:
         type=float,
         default=0.35,
         help="Confidence threshold 0.0-1.0 (default: 0.35)",
+    )
+
+    parser.add_argument(
+        "--iou",
+        type=float,
+        default=0.30,
+        help="IoU threshold for NMS 0.0-1.0 (default: 0.30, optimal from grid search)",
+    )
+
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=640,
+        help="Image size for preprocessing (default: 640)",
     )
 
     parser.add_argument(
@@ -136,7 +260,36 @@ Examples:
 
     args = parser.parse_args()
 
+    # Load and merge config file if provided
+    if args.config:
+        try:
+            config_path = Path(args.config)
+            config = load_config_file(config_path)
+
+            # Merge config with args (CLI args take precedence)
+            for key, value in config.items():
+                # Convert kebab-case to snake_case
+                arg_name = key.replace("-", "_")
+
+                # Only set if arg wasn't explicitly provided
+                if hasattr(args, arg_name):
+                    current = getattr(args, arg_name)
+                    # Set from config if it's None or still at default
+                    if current is None or (arg_name == "output" and current == "results"):
+                        setattr(args, arg_name, value)
+
+            if not args.quiet:
+                print(f"✓ Loaded configuration from {config_path}")
+
+        except Exception as e:
+            print(f"✗ Failed to load config: {e}", file=sys.stderr)
+            sys.exit(1)
+
     # Validate inputs
+    if args.input is None:
+        print(f"✗ --input is required (or provide via config file)", file=sys.stderr)
+        sys.exit(1)
+
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"✗ Input not found: {input_path}", file=sys.stderr)
@@ -274,6 +427,7 @@ Examples:
             detector = DiagramDetector(
                 model=args.model,
                 confidence=args.confidence,
+                iou=args.iou,
                 device=args.device,
                 batch_size=batch_size,
                 verbose=not args.quiet,
