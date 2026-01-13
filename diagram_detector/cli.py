@@ -273,6 +273,11 @@ Examples:
 
             # Merge config with args (CLI args take precedence)
             for key, value in config.items():
+                # Skip nested dicts (like "remote": {"host": ..., "port": ...})
+                # These are metadata, not CLI arguments
+                if isinstance(value, dict):
+                    continue
+
                 # Convert kebab-case to snake_case
                 arg_name = key.replace("-", "_")
 
