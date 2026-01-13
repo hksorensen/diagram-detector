@@ -93,6 +93,11 @@ def merge_config_with_args(config: Dict[str, Any], args: argparse.Namespace) -> 
     for config_key, value in config.items():
         arg_name = key_mapping.get(config_key, config_key)
 
+        # Skip nested dicts (like "remote": {"host": ..., "port": ...})
+        # These are metadata, not CLI arguments
+        if isinstance(value, dict):
+            continue
+
         # Only set from config if not explicitly provided via CLI
         # This is a simplified check - in practice, detecting "was it provided" is tricky
         if hasattr(args, arg_name):
