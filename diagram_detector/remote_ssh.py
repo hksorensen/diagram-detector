@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 import tempfile
 import shutil
+import time
 from datetime import datetime
 
 from .models import DetectionResult, DiagramDetection
@@ -557,13 +558,19 @@ class SSHRemoteDetector:
                     continue
 
                 # 1. Upload batch
+                upload_start = time.time()
                 self._upload_batch(batch_paths, batch_id)
+                upload_time = time.time() - upload_start
 
                 # 2. Run inference
+                inference_start = time.time()
                 self._run_inference_batch(batch_id, gpu_batch_size)
+                inference_time = time.time() - inference_start
 
                 # 3. Download results
+                download_start = time.time()
                 batch_results_dir = self._download_results(batch_id, output_dir)
+                download_time = time.time() - download_start
 
                 # 4. Parse results
                 results = self._parse_results(batch_results_dir)
@@ -575,7 +582,13 @@ class SSHRemoteDetector:
 
                 if self.verbose:
                     batch_diagrams = sum(r.count for r in results)
-                    print(f"✓ Batch complete: {batch_diagrams} diagrams found")
+                    total_time = upload_time + inference_time + download_time
+                    print(f"\n  Timing breakdown:")
+                    print(f"    Upload:    {upload_time:6.1f}s ({upload_time/total_time*100:4.1f}%) - {len(batch_paths)/upload_time:.1f} imgs/s")
+                    print(f"    Inference: {inference_time:6.1f}s ({inference_time/total_time*100:4.1f}%) - {len(batch_paths)/inference_time:.1f} imgs/s")
+                    print(f"    Download:  {download_time:6.1f}s ({download_time/total_time*100:4.1f}%)")
+                    print(f"    Total:     {total_time:6.1f}s - {len(batch_paths)/total_time:.1f} imgs/s")
+                    print(f"\n  ✓ Batch complete: {batch_diagrams} diagrams found")
 
             except Exception as e:
                 print(f"\n✗ Batch {batch_id} failed: {e}")

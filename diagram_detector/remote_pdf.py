@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Union, Optional, Dict
 import tempfile
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 
@@ -148,7 +149,7 @@ class PDFRemoteDetector:
 
     def _extract_pdfs_parallel(
         self, pdf_batch: List[Path], batch_dir: Path
-    ) -> Dict[str, List[Path]]:
+    ) -> tuple[Dict[str, List[Path]], float]:
         """
         Extract multiple PDFs in parallel.
 
@@ -157,8 +158,10 @@ class PDFRemoteDetector:
             batch_dir: Working directory
 
         Returns:
-            Dict mapping PDF name to image paths
+            Tuple of (Dict mapping PDF name to image paths, extraction time in seconds)
         """
+        start_time = time.time()
+
         if self.verbose:
             print(f"  Extracting {len(pdf_batch)} PDFs in parallel ({self.max_workers} workers)...")
 
@@ -191,7 +194,8 @@ class PDFRemoteDetector:
                             print(f"  ✗ {pdf_path.name}: {e}")
                         pdf_images[pdf_path.name] = []
 
-        return pdf_images
+        extraction_time = time.time() - start_time
+        return pdf_images, extraction_time
 
     def _process_pdf_batch(
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path, auto_git_commit: bool = False
@@ -212,7 +216,7 @@ class PDFRemoteDetector:
         batch_dir.mkdir(parents=True, exist_ok=True)
 
         # Extract all PDFs in batch (parallel if enabled)
-        pdf_images = self._extract_pdfs_parallel(pdf_batch, batch_dir)
+        pdf_images, extraction_time = self._extract_pdfs_parallel(pdf_batch, batch_dir)
 
         # Flatten to all images
         all_images = []
@@ -222,16 +226,21 @@ class PDFRemoteDetector:
             pdf_page_counts[pdf_name] = len(image_paths)
 
         if self.verbose:
-            print(f"  Total pages in batch: {len(all_images)}")
-            print("  Running inference on remote...")
+            print(f"  ✓ Extraction complete: {len(all_images)} pages in {extraction_time:.1f}s ({len(all_images)/extraction_time:.1f} pages/s)")
+            print(f"  Running remote inference on {len(all_images)} images...")
 
         # Run remote inference on all images
+        inference_start = time.time()
         results = self.remote_detector.detect(
             all_images,
             output_dir=batch_dir / "results",
             cleanup=True,
             auto_git_commit=auto_git_commit,
         )
+        inference_time = time.time() - inference_start
+
+        if self.verbose:
+            print(f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)")
 
         # Group results by PDF
         pdf_results = {}
@@ -317,7 +326,10 @@ class PDFRemoteDetector:
                     imgsz=self.imgsz,
                 )
                 if cached is not None:
-                    cached_results[pdf_path.name] = cached
+                    # Convert cached dicts back to DetectionResult objects
+                    cached_results[pdf_path.name] = [
+                        DetectionResult.from_dict(result_dict) for result_dict in cached
+                    ]
                     if self.verbose:
                         print(f"  ✓ {pdf_path.name} (cached)")
                 else:

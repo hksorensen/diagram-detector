@@ -75,6 +75,16 @@ class DiagramDetection:
             "area": float(self.area),
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DiagramDetection":
+        """Create DiagramDetection from dictionary."""
+        return cls(
+            bbox=tuple(data["bbox"]),
+            confidence=data["confidence"],
+            class_name=data.get("class", "diagram"),
+            class_id=data.get("class_id", 0),
+        )
+
 
 @dataclass
 class DetectionResult:
@@ -181,6 +191,34 @@ class DetectionResult:
             row["page_number"] = self.page_number
 
         return row
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DetectionResult":
+        """
+        Create DetectionResult from dictionary (e.g., from cache).
+
+        Args:
+            data: Dictionary from to_dict() or cache
+
+        Returns:
+            DetectionResult object
+        """
+        # Reconstruct DiagramDetection objects
+        detections = [
+            DiagramDetection.from_dict(d) for d in data.get("detections", [])
+        ]
+
+        return cls(
+            filename=data["filename"],
+            page_number=data.get("page_number"),
+            has_diagram=data.get("has_diagram", False),
+            count=data.get("count", 0),
+            confidence=data.get("confidence", 0.0),
+            detections=detections,
+            image=None,  # Images not stored in cache
+            image_width=data.get("image_width", 0),
+            image_height=data.get("image_height", 0),
+        )
 
     def save_visualization(
         self, output_path: Path, line_width: int = 3, font_size: int = 20

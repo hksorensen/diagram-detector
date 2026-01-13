@@ -514,7 +514,13 @@ def convert_pdf_to_images(
     progress_bar: Optional[Callable] = None
 ) -> List[np.ndarray]:
     """
-    Convert PDF pages to images.
+    Convert PDF pages to images using PyMuPDF (fitz) for best performance.
+
+    PyMuPDF is significantly faster than pdf2image/Poppler:
+    - 3-5x faster rendering
+    - Lower memory usage
+    - Direct memory access (no subprocess overhead)
+    - Native C++ implementation
 
     Args:
         pdf_path: Path to PDF file
@@ -530,10 +536,11 @@ def convert_pdf_to_images(
         List of images as numpy arrays (RGB format, grayscale if enabled)
     """
     try:
-        from pdf2image import convert_from_path
+        import fitz  # PyMuPDF
     except ImportError:
         raise ImportError(
-            "pdf2image is required for PDF support. " "Install with: pip install pdf2image"
+            "PyMuPDF is required for PDF support. "
+            "Install with: pip install pymupdf"
         )
 
     pdf_path = Path(pdf_path)
@@ -542,48 +549,74 @@ def convert_pdf_to_images(
 
     mode_str = "grayscale" if grayscale else "RGB"
     if verbose:
-        print(f"Converting PDF to images (DPI={dpi}, {mode_str})...")
+        print(f"Converting PDF to images (DPI={dpi}, {mode_str}) using PyMuPDF...")
 
-    images = convert_from_path(
-        pdf_path,
-        dpi=dpi,
-        first_page=first_page,
-        last_page=last_page,
-        fmt="jpeg",  # Faster than PNG
-    )
+    # Open PDF
+    doc = fitz.open(pdf_path)
 
+    # Determine page range
+    total_pages = len(doc)
+    start_page = (first_page - 1) if first_page else 0  # Convert to 0-indexed
+    end_page = (last_page - 1) if last_page else (total_pages - 1)
+
+    # Validate range
+    start_page = max(0, min(start_page, total_pages - 1))
+    end_page = max(start_page, min(end_page, total_pages - 1))
+
+    num_pages = end_page - start_page + 1
+
+    # Calculate zoom factor from DPI (72 DPI = 1.0 zoom)
+    zoom = dpi / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+
+    # Setup progress bar
     if progress_bar is not None:
         # Case 3: Use provided progress bar
-        page_pbar = progress_bar
-        if hasattr(page_pbar, 'reset'):
-            page_pbar.reset(total=len(images))
-        image_iter = images  # Iterate over images directly
+        if hasattr(progress_bar, 'reset'):
+            progress_bar.reset(total=num_pages)
+        page_iter = range(start_page, end_page + 1)
         own_pbar = False
     elif show_progress:
-        # Case 1: Normal tqdm - wrap images with tqdm
+        # Case 1: Normal tqdm
         logger.debug("Creating normal tqdm progress bar")
-        image_iter = tqdm(images, desc="Converting", position=1, leave=False)
-        page_pbar = image_iter  # For closing later
+        page_iter = tqdm(range(start_page, end_page + 1), desc="Converting", position=1, leave=False)
         own_pbar = True
     else:
-        # Case 2: Silent tqdm - wrap images with tqdm (disabled)
-        image_iter = tqdm(images, desc="Converting", position=1, leave=False, disable=True)
-        page_pbar = image_iter  # For closing later
+        # Case 2: Silent tqdm
+        page_iter = tqdm(range(start_page, end_page + 1), desc="Converting", position=1, leave=False, disable=True)
         own_pbar = True
-    
-    # Convert PIL Images to numpy arrays (single loop for all cases)
+
+    # Convert pages to numpy arrays
     np_images = []
-    for img in image_iter:
+    for page_num in page_iter:
+        page = doc[page_num]
+
+        # Render page to pixmap
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+
+        # Convert pixmap to numpy array
+        # PyMuPDF pixmap is in RGB format already
+        img_data = np.frombuffer(pix.samples, dtype=np.uint8)
+        img_array = img_data.reshape(pix.height, pix.width, 3)  # RGB
+
         if grayscale:
             # Convert to grayscale, then back to RGB (YOLO expects 3 channels)
+            from PIL import Image
+            img = Image.fromarray(img_array)
             img = img.convert("L").convert("RGB")
-        np_images.append(np.array(img))
+            img_array = np.array(img)
+
+        np_images.append(img_array)
+
         # Manual update only for Case 3 (provided progress_bar)
         if progress_bar is not None:
-            page_pbar.update(1)
+            progress_bar.update(1)
 
     if own_pbar:
-        page_pbar.close()
+        page_iter.close()
+
+    # Close document
+    doc.close()
 
     return np_images
 
