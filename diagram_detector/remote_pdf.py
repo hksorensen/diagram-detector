@@ -195,6 +195,27 @@ class PDFRemoteDetector:
                 f"({cache_stats['size_mb']:.1f} MB compressed)"
             )
 
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup SSH resources."""
+        self.cleanup()
+        return False
+
+    def __del__(self):
+        """Destructor - cleanup SSH resources as safety net."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass  # Ignore errors during destruction
+
+    def cleanup(self):
+        """Clean up SSH control socket and connections."""
+        if hasattr(self, 'remote_detector') and self.remote_detector:
+            self.remote_detector.cleanup()
+
     def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
         """
         Extract PDF pages to images locally.
@@ -428,61 +449,81 @@ class PDFRemoteDetector:
         if self.verbose:
             print(f"\nProcessing {len(to_process)} PDFs ({len(cached_results)} cached)...\n")
 
+        # Process in batches (skip if all cached)
+        all_results = cached_results.copy()
+
         if not to_process:
             if self.verbose:
                 print("✓ All PDFs cached, no processing needed!")
-            return cached_results
+        else:
+            num_batches = (len(to_process) + self.batch_size - 1) // self.batch_size
 
-        # Process in batches
-        all_results = cached_results.copy()
-        num_batches = (len(to_process) + self.batch_size - 1) // self.batch_size
+            with tempfile.TemporaryDirectory() as temp_dir:
+                work_dir = Path(temp_dir)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            work_dir = Path(temp_dir)
+                for batch_idx in range(num_batches):
+                    batch_start = batch_idx * self.batch_size
+                    batch_end = min((batch_idx + 1) * self.batch_size, len(to_process))
+                    batch_pdfs = to_process[batch_start:batch_end]
+                    batch_id = f"batch_{batch_idx:04d}"
 
-            for batch_idx in range(num_batches):
-                batch_start = batch_idx * self.batch_size
-                batch_end = min((batch_idx + 1) * self.batch_size, len(to_process))
-                batch_pdfs = to_process[batch_start:batch_end]
-                batch_id = f"batch_{batch_idx:04d}"
+                    if self.verbose:
+                        print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
-                if self.verbose:
-                    print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
-
-                # Process batch
-                batch_results, batch_extraction_time, batch_inference_time = self._process_pdf_batch(
-                    batch_pdfs, batch_id, work_dir, auto_git_commit
-                )
-
-                # Accumulate timing
-                total_extraction_time += batch_extraction_time
-                total_inference_time += batch_inference_time
-
-                # Cache results
-                if use_cache:
-                    for pdf_path in batch_pdfs:
-                        # Convert DetectionResult objects to dicts for JSON serialization
-                        results_list = batch_results[pdf_path.name]
-                        results_dicts = [asdict(r) for r in results_list]
-
-                        self.cache.set(
-                            pdf_path,
-                            model=self.model,
-                            confidence=self.confidence,
-                            iou=self.iou,
-                            dpi=self.dpi,
-                            imgsz=self.imgsz,
-                            results=results_dicts,
-                        )
-
-                # Add to results
-                all_results.update(batch_results)
-
-                if self.verbose:
-                    batch_diagrams = sum(
-                        sum(r.count for r in results) for results in batch_results.values()
+                    # Process batch
+                    batch_results, batch_extraction_time, batch_inference_time = self._process_pdf_batch(
+                        batch_pdfs, batch_id, work_dir, auto_git_commit
                     )
-                    print(f"✓ Batch complete: {batch_diagrams} diagrams found")
+
+                    # Accumulate timing
+                    total_extraction_time += batch_extraction_time
+                    total_inference_time += batch_inference_time
+
+                    # Cache results
+                    if use_cache:
+                        for pdf_path in batch_pdfs:
+                            # Convert DetectionResult objects to dicts for JSON serialization
+                            results_list = batch_results[pdf_path.name]
+                            results_dicts = [asdict(r) for r in results_list]
+
+                            self.cache.set(
+                                pdf_path,
+                                model=self.model,
+                                confidence=self.confidence,
+                                iou=self.iou,
+                                dpi=self.dpi,
+                                imgsz=self.imgsz,
+                                results=results_dicts,
+                            )
+
+                    # Add to results
+                    all_results.update(batch_results)
+
+                    if self.verbose:
+                        batch_diagrams = sum(
+                            sum(r.count for r in results) for results in batch_results.values()
+                        )
+                        print(f"✓ Batch complete: {batch_diagrams} diagrams found")
+
+                    # Log timing for this batch incrementally
+                    if timing_log:
+                        batch_pages = sum(len(results) for results in batch_results.values())
+                        batch_total_time = batch_extraction_time + batch_inference_time
+
+                        _append_timing_to_csv(
+                            log_path=timing_log,
+                            timestamp=datetime.now(),
+                            num_pdfs=len(batch_pdfs),
+                            num_pages=batch_pages,
+                            extraction_time=batch_extraction_time,
+                            inference_time=batch_inference_time,
+                            total_time=batch_total_time,
+                            model=self.model,
+                            batch_size=self.batch_size,
+                            image_batch_size=self.remote_detector.batch_size,
+                            remote_host=self.config.host,
+                            num_cached=0,  # This batch had no cached results
+                        )
 
         # Save results if requested
         if output_dir:
@@ -520,8 +561,8 @@ class PDFRemoteDetector:
                 print(f"Cache: {num_pdfs} PDFs ({size_mb:.1f} MB)")
             print(f"{'='*60}\n")
 
-        # Log timing data to CSV if requested
-        if timing_log and to_process:  # Only log if we processed something
+        # Log timing data to CSV if requested (always log, even for fully cached runs)
+        if timing_log:
             run_total_time = time.time() - run_start_time
             total_pages = sum(len(results) for results in all_results.values())
 
