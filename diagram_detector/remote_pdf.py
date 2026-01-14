@@ -133,7 +133,7 @@ class PDFRemoteDetector:
             print(f"  Extracting {pdf_path.name} (DPI={self.dpi})...")
 
         # Convert PDF to images (quiet - we show our own progress)
-        images = convert_pdf_to_images(pdf_path, dpi=self.dpi, verbose=False)
+        images = convert_pdf_to_images(pdf_path, dpi=self.dpi, verbose=False, show_progress=False)
 
         # Save images
         output_dir.mkdir(parents=True, exist_ok=True)
