@@ -220,8 +220,9 @@ class PDFRemoteDetector:
             Image.fromarray(img_array).save(img_path, "JPEG", quality=95)
             image_paths.append(img_path)
 
-        if self.verbose:
-            print(f"  ✓ {pdf_path.name}: {len(image_paths)} pages")
+        # Skip per-PDF completion message - shows in batch summary instead
+        # if self.verbose:
+        #     print(f"  ✓ {pdf_path.name}: {len(image_paths)} pages")
 
         return image_paths
 
