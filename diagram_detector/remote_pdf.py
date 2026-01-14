@@ -331,12 +331,12 @@ class PDFRemoteDetector:
                     cached_results[pdf_path.name] = [
                         DetectionResult.from_dict(result_dict) for result_dict in cached
                     ]
-                    if self.verbose:
-                        print(f"  ✓ {pdf_path.name} (cached)")
+                    # if self.verbose:
+                    #     print(f"  ✓ {pdf_path.name} (cached)")
                 else:
                     to_process.append(pdf_path)
-                    if self.verbose:
-                        print(f"  • {pdf_path.name} (needs processing)")
+                    # if self.verbose:
+                    #     print(f"  • {pdf_path.name} (needs processing)")
         else:
             to_process = pdf_list
 

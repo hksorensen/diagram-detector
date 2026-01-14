@@ -614,6 +614,9 @@ def convert_pdf_to_images(
 
     if own_pbar:
         page_iter.close()
+        # Explicitly clear any remaining progress bar output
+        if show_progress:
+            print('\r' + ' ' * 80 + '\r', end='', flush=True)
 
     # Close document
     doc.close()

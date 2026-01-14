@@ -376,30 +376,26 @@ class SSHRemoteDetector:
         # Show spinner while command runs
         start_time = time.time()
         spinner_idx = 0
-        last_update = -1  # Track last displayed second to avoid unnecessary updates
 
         while not stop_spinner.is_set():
             elapsed = time.time() - start_time
             elapsed_int = int(elapsed)
 
-            # Only update display when second changes (reduces flicker)
-            if elapsed_int != last_update:
-                spinner = spinner_chars[spinner_idx % len(spinner_chars)]
+            # Update spinner on every iteration
+            spinner = spinner_chars[spinner_idx % len(spinner_chars)]
 
-                if num_images > 0:
-                    # Show progress message with image count
-                    msg = f"  {spinner} Processing {num_images} images on remote GPU... ({elapsed_int}s)"
-                else:
-                    msg = f"  {spinner} Processing on remote GPU... ({elapsed_int}s)"
+            if num_images > 0:
+                # Show progress message with image count
+                msg = f"  {spinner} Processing {num_images} images on remote GPU... ({elapsed_int}s)"
+            else:
+                msg = f"  {spinner} Processing on remote GPU... ({elapsed_int}s)"
 
-                # Pad message to consistent length to avoid artifacts
-                msg = msg.ljust(80)
-                print(f"\r{msg}", end="", flush=True)
+            # Pad message to consistent length to avoid artifacts
+            msg = msg.ljust(80)
+            print(f"\r{msg}", end="", flush=True)
 
-                last_update = elapsed_int
-                spinner_idx += 1
-
-            time.sleep(0.5)  # Check twice per second (reduced from 10x/sec)
+            spinner_idx += 1
+            time.sleep(0.2)  # Update 5 times per second for smooth animation
 
         # Clear spinner line and add newline
         print("\r" + " " * 80, flush=True)
@@ -508,12 +504,12 @@ class SSHRemoteDetector:
             self._run_ssh_command(cmd, check=True)
 
         if self.verbose:
-            print(f"  ✓ Batch {batch_id} processed")
+            print(f"  ✓ Batch {batch_id} processed and ready for download")
 
     def _download_results(self, batch_id: str, output_dir: Path) -> Path:
         """Download results from remote server."""
-        if self.verbose:
-            print(f"  Downloading results...")
+        # if self.verbose:
+        #     print(f"  Downloading results...")
 
         # Create local output directory (organized by run)
         run_output = output_dir / self.run_id
