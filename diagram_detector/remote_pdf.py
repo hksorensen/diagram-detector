@@ -434,6 +434,56 @@ class PDFRemoteDetector:
 
         return all_results
 
+    def get_cached_results(
+        self, pdf_paths: Union[Path, List[Path]]
+    ) -> Dict[str, Optional[List[DetectionResult]]]:
+        """
+        Retrieve cached results without processing.
+
+        Args:
+            pdf_paths: Single PDF, directory of PDFs, or list of PDF paths
+
+        Returns:
+            Dict mapping PDF filename to list of DetectionResult (None if not cached)
+
+        Example:
+            # Check what's already cached
+            cached = detector.get_cached_results(pdf_paths)
+            missing = [pdf for pdf, result in cached.items() if result is None]
+            print(f"Need to process: {len(missing)} PDFs")
+        """
+        # Parse input
+        if isinstance(pdf_paths, Path):
+            if pdf_paths.is_dir():
+                pdf_list = sorted(pdf_paths.glob("*.pdf"))
+            else:
+                pdf_list = [pdf_paths]
+        elif isinstance(pdf_paths, list):
+            pdf_list = [Path(p) for p in pdf_paths]
+        else:
+            pdf_list = [Path(pdf_paths)]
+
+        results = {}
+        for pdf_path in pdf_list:
+            cached = self.cache.get(
+                pdf_path,
+                model=self.model,
+                confidence=self.confidence,
+                iou=self.iou,
+                dpi=self.dpi,
+                imgsz=self.imgsz,
+            )
+
+            if cached is not None:
+                # Convert cached dicts back to DetectionResult objects
+                results[pdf_path.name] = [
+                    DetectionResult.from_dict(result_dict) for result_dict in cached
+                ]
+            else:
+                results[pdf_path.name] = None
+
+        return results
+
     def clear_cache(self) -> None:
         """Clear cache."""
         self.cache.clear()

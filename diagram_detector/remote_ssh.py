@@ -13,6 +13,8 @@ from dataclasses import dataclass
 import tempfile
 import shutil
 import time
+import threading
+import sys
 from datetime import datetime
 
 from .models import DetectionResult, DiagramDetection
@@ -331,6 +333,66 @@ class SSHRemoteDetector:
 
         return result
 
+    def _run_ssh_command_with_spinner(self, command: str, num_images: int = 0) -> subprocess.CompletedProcess:
+        """
+        Run SSH command with a visual spinner to show activity.
+
+        Args:
+            command: Command to run
+            num_images: Number of images being processed (for context)
+
+        Returns:
+            CompletedProcess result
+        """
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        result_container = []
+        exception_container = []
+        stop_spinner = threading.Event()
+
+        def run_command():
+            try:
+                result = self._run_ssh_command(command, check=True)
+                result_container.append(result)
+            except Exception as e:
+                exception_container.append(e)
+            finally:
+                stop_spinner.set()
+
+        # Start command in background thread
+        thread = threading.Thread(target=run_command, daemon=True)
+        thread.start()
+
+        # Show spinner while command runs
+        elapsed = 0.0
+        start_time = time.time()
+        spinner_idx = 0
+
+        while not stop_spinner.is_set():
+            elapsed = time.time() - start_time
+            spinner = spinner_chars[spinner_idx % len(spinner_chars)]
+
+            if num_images > 0:
+                # Show progress message with image count
+                msg = f"\r  {spinner} Processing {num_images} images on remote GPU... ({elapsed:.0f}s)"
+            else:
+                msg = f"\r  {spinner} Processing on remote GPU... ({elapsed:.0f}s)"
+
+            print(msg, end="", flush=True)
+            spinner_idx += 1
+            time.sleep(0.1)
+
+        # Clear spinner line
+        print("\r" + " " * 80, end="\r", flush=True)
+
+        # Wait for thread to complete
+        thread.join()
+
+        # Check for exceptions
+        if exception_container:
+            raise exception_container[0]
+
+        return result_container[0] if result_container else None
+
     def _setup_remote_workspace(self) -> None:
         """Setup remote workspace directory."""
         if self.verbose:
@@ -383,7 +445,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"✓ Batch {batch_id} uploaded")
 
-    def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32) -> None:
+    def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32, num_images: int = 0) -> None:
         """Run inference on batch using run-level config."""
         if self.verbose:
             print(f"Running inference on batch {batch_id}...")
@@ -421,11 +483,14 @@ class SSHRemoteDetector:
             f"--quiet"
         )
 
-        # Run inference
-        self._run_ssh_command(cmd, check=True)
+        # Run inference (show spinner if verbose)
+        if self.verbose and num_images > 0:
+            self._run_ssh_command_with_spinner(cmd, num_images)
+        else:
+            self._run_ssh_command(cmd, check=True)
 
         if self.verbose:
-            print(f"✓ Batch {batch_id} processed")
+            print(f"  ✓ Batch {batch_id} processed")
 
     def _download_results(self, batch_id: str, output_dir: Path) -> Path:
         """Download results from remote server."""
@@ -613,7 +678,7 @@ class SSHRemoteDetector:
 
                 # 2. Run inference
                 inference_start = time.time()
-                self._run_inference_batch(batch_id, gpu_batch_size)
+                self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
                 inference_time = time.time() - inference_start
 
                 # 3. Download results
