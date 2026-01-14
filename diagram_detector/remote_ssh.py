@@ -196,11 +196,12 @@ class SSHRemoteDetector:
         self._run_config_path = None
 
         # SSH connection multiplexing (reuse single connection for multiple rsync operations)
-        # Create control socket in temp directory
+        # Use short path to avoid Unix domain socket path length limit (104 bytes on macOS)
+        # Format: /tmp/dd-{PID}-{timestamp} (e.g., /tmp/dd-12345-150827)
         import os
-        control_dir = Path(tempfile.gettempdir()) / "diagram-detector-ssh"
-        control_dir.mkdir(exist_ok=True)
-        self._ssh_control_path = str(control_dir / f"control-{self.run_id}")
+        timestamp = datetime.now().strftime("%H%M%S")
+        socket_name = f"dd-{os.getpid()}-{timestamp}"
+        self._ssh_control_path = f"/tmp/{socket_name}"
 
         # Verify SSH connection
         self._verify_connection()
