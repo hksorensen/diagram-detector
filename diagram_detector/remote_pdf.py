@@ -512,6 +512,29 @@ class PDFRemoteDetector:
                     if self.verbose:
                         print(f"✓ Batch complete: {batch_detections} diagrams found")
 
+                        # Estimate remaining time
+                        pdfs_processed = batch_end
+                        pdfs_remaining = len(to_process) - pdfs_processed
+                        elapsed = time.time() - run_start_time
+
+                        if pdfs_processed > 0 and pdfs_remaining > 0:
+                            avg_time_per_pdf = elapsed / pdfs_processed
+                            est_remaining_secs = avg_time_per_pdf * pdfs_remaining
+
+                            # Format as hours:minutes:seconds
+                            est_hours = int(est_remaining_secs // 3600)
+                            est_mins = int((est_remaining_secs % 3600) // 60)
+                            est_secs = int(est_remaining_secs % 60)
+
+                            if est_hours > 0:
+                                eta_str = f"{est_hours}h {est_mins}m {est_secs}s"
+                            elif est_mins > 0:
+                                eta_str = f"{est_mins}m {est_secs}s"
+                            else:
+                                eta_str = f"{est_secs}s"
+
+                            print(f"  ETA: {eta_str} ({pdfs_remaining} PDFs remaining)")
+
                     # Log timing for this batch incrementally
                     if timing_log:
                         batch_pages = sum(len(results) for results in batch_results.values())
