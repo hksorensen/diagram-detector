@@ -14,6 +14,8 @@ from typing import List, Union, Optional, Dict
 import tempfile
 import shutil
 import time
+import csv
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 
@@ -21,6 +23,81 @@ from .models import DetectionResult
 from .utils import convert_pdf_to_images, save_json
 from .remote_ssh import RemoteConfig, SSHRemoteDetector
 from .cache import DetectionCache
+
+
+def _append_timing_to_csv(
+    log_path: Path,
+    timestamp: datetime,
+    num_pdfs: int,
+    num_pages: int,
+    extraction_time: float,
+    inference_time: float,
+    total_time: float,
+    model: str,
+    batch_size: int,
+    image_batch_size: int,
+    remote_host: str,
+    num_cached: int = 0,
+) -> None:
+    """
+    Append timing data to CSV log file.
+
+    Creates file with headers if it doesn't exist.
+
+    Args:
+        log_path: Path to CSV log file
+        timestamp: Run timestamp
+        num_pdfs: Number of PDFs processed
+        num_pages: Total pages processed
+        extraction_time: PDF extraction time (seconds)
+        inference_time: Remote inference time (seconds)
+        total_time: Total time (seconds)
+        model: Model name
+        batch_size: PDFs per batch
+        image_batch_size: Images per inference batch
+        remote_host: Remote server hostname
+        num_cached: Number of PDFs served from cache
+    """
+    log_path = Path(log_path)
+
+    # Check if file exists to determine if we need headers
+    file_exists = log_path.exists()
+
+    # Ensure parent directory exists
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Calculate derived metrics
+    pages_per_sec = num_pages / total_time if total_time > 0 else 0
+    extraction_pct = (extraction_time / total_time * 100) if total_time > 0 else 0
+    inference_pct = (inference_time / total_time * 100) if total_time > 0 else 0
+
+    # Prepare row
+    row = {
+        'timestamp': timestamp.isoformat(),
+        'num_pdfs': num_pdfs,
+        'num_pages': num_pages,
+        'num_cached': num_cached,
+        'extraction_time': round(extraction_time, 2),
+        'inference_time': round(inference_time, 2),
+        'total_time': round(total_time, 2),
+        'pages_per_sec': round(pages_per_sec, 2),
+        'extraction_pct': round(extraction_pct, 1),
+        'inference_pct': round(inference_pct, 1),
+        'model': model,
+        'batch_size': batch_size,
+        'image_batch_size': image_batch_size,
+        'remote_host': remote_host,
+    }
+
+    # Write to CSV
+    with open(log_path, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+
+        # Write header if new file
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow(row)
 
 
 class PDFRemoteDetector:
@@ -200,7 +277,7 @@ class PDFRemoteDetector:
 
     def _process_pdf_batch(
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path, auto_git_commit: bool = False
-    ) -> Dict[str, List[DetectionResult]]:
+    ) -> tuple[Dict[str, List[DetectionResult]], float, float]:
         """
         Process batch of PDFs.
 
@@ -211,7 +288,7 @@ class PDFRemoteDetector:
             auto_git_commit: Automatically git commit the run config
 
         Returns:
-            Dict mapping PDF name to results
+            Tuple of (results dict, extraction_time, inference_time)
         """
         batch_dir = work_dir / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
@@ -261,7 +338,7 @@ class PDFRemoteDetector:
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
 
-        return pdf_results
+        return pdf_results, extraction_time, inference_time
 
     def detect_pdfs(
         self,
@@ -270,6 +347,7 @@ class PDFRemoteDetector:
         use_cache: bool = True,
         force_reprocess: bool = False,
         auto_git_commit: bool = False,
+        timing_log: Optional[Path] = None,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -280,6 +358,7 @@ class PDFRemoteDetector:
             use_cache: Use cached results if available
             force_reprocess: Force reprocessing even if cached
             auto_git_commit: Automatically git commit the run config
+            timing_log: Path to CSV file for logging timing data (None = no logging)
 
         Returns:
             Dict mapping PDF filename to list of DetectionResult (one per page)
@@ -297,6 +376,11 @@ class PDFRemoteDetector:
 
         if not pdf_list:
             raise ValueError("No PDF files found")
+
+        # Track timing for logging
+        run_start_time = time.time()
+        total_extraction_time = 0.0
+        total_inference_time = 0.0
 
         if self.verbose:
             print(f"\n{'='*60}")
@@ -365,7 +449,13 @@ class PDFRemoteDetector:
                     print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
                 # Process batch
-                batch_results = self._process_pdf_batch(batch_pdfs, batch_id, work_dir, auto_git_commit)
+                batch_results, batch_extraction_time, batch_inference_time = self._process_pdf_batch(
+                    batch_pdfs, batch_id, work_dir, auto_git_commit
+                )
+
+                # Accumulate timing
+                total_extraction_time += batch_extraction_time
+                total_inference_time += batch_inference_time
 
                 # Cache results
                 if use_cache:
@@ -428,6 +518,29 @@ class PDFRemoteDetector:
                 size_mb = cache_stats["size_mb"]
                 print(f"Cache: {num_pdfs} PDFs ({size_mb:.1f} MB)")
             print(f"{'='*60}\n")
+
+        # Log timing data to CSV if requested
+        if timing_log and to_process:  # Only log if we processed something
+            run_total_time = time.time() - run_start_time
+            total_pages = sum(len(results) for results in all_results.values())
+
+            _append_timing_to_csv(
+                log_path=timing_log,
+                timestamp=datetime.now(),
+                num_pdfs=len(to_process),
+                num_pages=total_pages,
+                extraction_time=total_extraction_time,
+                inference_time=total_inference_time,
+                total_time=run_total_time,
+                model=self.model,
+                batch_size=self.batch_size,
+                image_batch_size=self.remote_detector.batch_size,
+                remote_host=self.config.host,
+                num_cached=len(cached_results),
+            )
+
+            if self.verbose:
+                print(f"✓ Timing logged to: {timing_log}")
 
         return all_results
 
