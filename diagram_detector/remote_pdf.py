@@ -129,11 +129,8 @@ class PDFRemoteDetector:
         Returns:
             List of image paths
         """
-        if self.verbose:
-            print(f"  Extracting {pdf_path.name} (DPI={self.dpi})...")
-
-        # Convert PDF to images (quiet - we show our own progress)
-        images = convert_pdf_to_images(pdf_path, dpi=self.dpi, verbose=False, show_progress=False)
+        # Convert PDF to images (show progress bar but no verbose messages)
+        images = convert_pdf_to_images(pdf_path, dpi=self.dpi, verbose=False, show_progress=self.verbose)
 
         # Save images
         output_dir.mkdir(parents=True, exist_ok=True)

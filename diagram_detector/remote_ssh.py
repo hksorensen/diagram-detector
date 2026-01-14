@@ -344,8 +344,14 @@ class SSHRemoteDetector:
         Returns:
             CompletedProcess result
         """
-        # Use simple ASCII spinner (reliable across all terminals)
-        spinner_chars = ["|", "/", "-", "\\"]
+        # Try fancy Unicode spinner, fallback to ASCII if terminal doesn't support it
+        try:
+            # Test Unicode support by encoding
+            test = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".encode(sys.stdout.encoding or 'utf-8')
+            spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        except (AttributeError, UnicodeEncodeError, LookupError):
+            # Fallback to ASCII spinner
+            spinner_chars = ["|", "/", "-", "\\"]
 
         result_container = []
         exception_container = []
@@ -428,7 +434,7 @@ class SSHRemoteDetector:
     def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
         """Upload batch of images via rsync."""
         if self.verbose:
-            print(f"Uploading batch {batch_id} ({len(image_paths)} images)...")
+            print(f"  Uploading batch {batch_id} ({len(image_paths)} images)...")
 
         # Create temporary directory with batch images
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -438,31 +444,29 @@ class SSHRemoteDetector:
             for img_path in image_paths:
                 shutil.copy2(img_path, temp_path / img_path.name)
 
-            # Rsync to remote
+            # Rsync to remote (quiet - just show summary)
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
 
             cmd = (
                 [
                     "rsync",
                     "-az",
-                    "--progress" if self.verbose else "--quiet",
+                    "--quiet",  # Always quiet - no per-file output
                 ]
                 + self.config.rsync_ssh_args
                 + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
             )
 
-            result = subprocess.run(cmd, capture_output=not self.verbose)
+            result = subprocess.run(cmd, capture_output=True)  # Always capture
 
             if result.returncode != 0:
                 raise RuntimeError(f"Upload failed: {result.stderr}")
 
         if self.verbose:
-            print(f"✓ Batch {batch_id} uploaded")
+            print(f"  ✓ Upload complete")
 
     def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32, num_images: int = 0) -> None:
         """Run inference on batch using run-level config."""
-        if self.verbose:
-            print(f"Running inference on batch {batch_id}...")
 
         # Create run-level config (only once per run)
         run_config_local = self._create_run_config(gpu_batch_size)
@@ -509,27 +513,27 @@ class SSHRemoteDetector:
     def _download_results(self, batch_id: str, output_dir: Path) -> Path:
         """Download results from remote server."""
         if self.verbose:
-            print(f"Downloading results for batch {batch_id}...")
+            print(f"  Downloading results...")
 
         # Create local output directory (organized by run)
         run_output = output_dir / self.run_id
         batch_output = run_output / batch_id
         batch_output.mkdir(parents=True, exist_ok=True)
 
-        # Rsync results
+        # Rsync results (quiet - just show summary)
         remote_output = f"{self.config.remote_work_dir}/output/{batch_id}/"
 
         cmd = (
             [
                 "rsync",
                 "-az",
-                "--progress" if self.verbose else "--quiet",
+                "--quiet",  # Always quiet - no per-file output
             ]
             + self.config.rsync_ssh_args
             + [f"{self.config.ssh_target}:{remote_output}", str(batch_output)]
         )
 
-        result = subprocess.run(cmd, capture_output=not self.verbose)
+        result = subprocess.run(cmd, capture_output=True)  # Always capture
 
         if result.returncode != 0:
             raise RuntimeError(f"Download failed: {result.stderr}")
