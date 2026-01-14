@@ -344,7 +344,18 @@ class SSHRemoteDetector:
         Returns:
             CompletedProcess result
         """
-        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        # Try Unicode spinner first, fallback to ASCII
+        try:
+            # Test if terminal supports Unicode
+            test_char = "⠋"
+            sys.stdout.write(test_char)
+            sys.stdout.write("\b")  # Backspace
+            sys.stdout.flush()
+            spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # Fallback to ASCII spinner
+            spinner_chars = ["|", "/", "-", "\\"]
+
         result_container = []
         exception_container = []
         stop_spinner = threading.Event()
@@ -363,26 +374,35 @@ class SSHRemoteDetector:
         thread.start()
 
         # Show spinner while command runs
-        elapsed = 0.0
         start_time = time.time()
         spinner_idx = 0
+        last_update = -1  # Track last displayed second to avoid unnecessary updates
 
         while not stop_spinner.is_set():
             elapsed = time.time() - start_time
-            spinner = spinner_chars[spinner_idx % len(spinner_chars)]
+            elapsed_int = int(elapsed)
 
-            if num_images > 0:
-                # Show progress message with image count
-                msg = f"\r  {spinner} Processing {num_images} images on remote GPU... ({elapsed:.0f}s)"
-            else:
-                msg = f"\r  {spinner} Processing on remote GPU... ({elapsed:.0f}s)"
+            # Only update display when second changes (reduces flicker)
+            if elapsed_int != last_update:
+                spinner = spinner_chars[spinner_idx % len(spinner_chars)]
 
-            print(msg, end="", flush=True)
-            spinner_idx += 1
-            time.sleep(0.1)
+                if num_images > 0:
+                    # Show progress message with image count
+                    msg = f"  {spinner} Processing {num_images} images on remote GPU... ({elapsed_int}s)"
+                else:
+                    msg = f"  {spinner} Processing on remote GPU... ({elapsed_int}s)"
+
+                # Pad message to consistent length to avoid artifacts
+                msg = msg.ljust(80)
+                print(f"\r{msg}", end="", flush=True)
+
+                last_update = elapsed_int
+                spinner_idx += 1
+
+            time.sleep(0.5)  # Check twice per second (reduced from 10x/sec)
 
         # Clear spinner line
-        print("\r" + " " * 80, end="\r", flush=True)
+        print("\r" + " " * 80 + "\r", end="", flush=True)
 
         # Wait for thread to complete
         thread.join()
