@@ -45,8 +45,8 @@ models/
 data/
 results/
 
-# Config (keep example files)
-remote_config.yaml
+# Config (keep example files, ignore user configs)
+config.yaml
 
 # OS
 .DS_Store

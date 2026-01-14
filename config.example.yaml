@@ -1,0 +1,70 @@
+# Diagram Detection Configuration
+# Copy to one of these locations:
+#   1. ./pipeline/config.yaml (research project - recommended)
+#   2. ./config.yaml (working directory)
+#   3. ~/.diagram-detector/config.yaml (user config)
+#   4. Specify via DIAGRAM_DETECTOR_CONFIG env var
+
+# ============================================================================
+# DETECT DIAGRAMS CONFIGURATION
+# ============================================================================
+detect_diagrams:
+  # Model and processing settings
+  model: "diagram-detector-v5"
+  batch_size: 50
+  max_workers: 8
+  confidence_threshold: 0.1
+  iou_threshold: 0.30
+
+  # Remote detection settings
+  use_remote: true
+  auto_deploy: true
+  auto_git_commit: true
+  timing_log: null  # Path to CSV timing log (null = no logging)
+
+  # ============================================================================
+  # REMOTE DETECTION CONFIGURATION
+  # ============================================================================
+  remote_detection:
+    # SSH connection settings
+    user: hkragh
+
+    # Endpoint fallback chain (tries in order until one succeeds)
+    endpoints:
+      - [192.168.1.183, 22]       # Local IP (fastest when on same network)
+      - [thinkcentre.local, 22]   # Local mDNS (fallback if IP changes)
+      - [henrikkragh.dk, 8022]    # External (fallback when off-network)
+
+    # Connection settings
+    max_rsync_retries: 3          # Number of retry attempts for transient failures
+    connection_timeout: 2.0       # Seconds to wait when checking connectivity
+
+    # Remote server paths
+    remote_work_dir: ~/diagram-detector
+    python_path: ~/diagram-detector/.venv/bin/python
+
+    # Detection parameters (defaults for remote)
+    model: yolo11m               # Model name
+    confidence: 0.35             # Confidence threshold (0.0-1.0)
+    iou: 0.30                    # IoU threshold for NMS (0.0-1.0)
+    imgsz: 640                   # Image size for preprocessing
+    batch_size: 1000             # Number of images per batch
+    max_workers: 8               # Parallel workers for PDF conversion
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+#
+# From Python:
+#   from diagram_detector.remote_ssh import RemoteConfig
+#
+#   # Auto-load from standard locations
+#   config = RemoteConfig.auto_load()
+#
+#   # Or load specific file
+#   config = RemoteConfig.from_yaml("config.yaml", key="detect_diagrams.remote_detection")
+#
+# From command line:
+#   export DIAGRAM_DETECTOR_CONFIG=/path/to/config.yaml
+#   python -m diagram_detector.cli --remote --input pdfs/
+#

@@ -117,32 +117,35 @@ class RemoteConfig:
         return self.get_rsync_ssh_args(control_path=None)
 
     @classmethod
-    def from_yaml(cls, config_path: Union[str, Path]) -> "RemoteConfig":
+    def from_yaml(cls, config_path: Union[str, Path], key: Optional[str] = None) -> "RemoteConfig":
         """
         Load configuration from YAML file.
 
         Args:
             config_path: Path to YAML config file
+            key: Optional key to extract subsection (e.g., "detect_diagrams.remote_detection")
 
         Returns:
             RemoteConfig instance
 
         Raises:
             FileNotFoundError: If config file doesn't exist
-            ValueError: If required fields are missing
+            ValueError: If required fields are missing or key not found
 
-        Example YAML:
+        Example YAML (standalone):
             user: hkragh
             endpoints:
               - [192.168.1.183, 22]
               - [thinkcentre.local, 22]
-              - [henrikkragh.dk, 8022]
             remote_work_dir: ~/diagram-detector
             python_path: ~/diagram-detector/.venv/bin/python
-            model: yolo11m
-            confidence: 0.35
-            iou: 0.30
-            batch_size: 1000
+
+        Example YAML (subsection):
+            detect_diagrams:
+              remote_detection:
+                user: hkragh
+                endpoints:
+                  - [192.168.1.183, 22]
         """
         import yaml
 
@@ -152,6 +155,13 @@ class RemoteConfig:
 
         with open(config_path) as f:
             data = yaml.safe_load(f)
+
+        # Extract subsection if key provided
+        if key:
+            for key_part in key.split('.'):
+                if not isinstance(data, dict) or key_part not in data:
+                    raise ValueError(f"Key '{key}' not found in config file: {config_path}")
+                data = data[key_part]
 
         # Convert endpoints from list of lists to list of tuples
         if "endpoints" in data and data["endpoints"]:
@@ -170,8 +180,9 @@ class RemoteConfig:
 
         Search order:
         1. DIAGRAM_DETECTOR_CONFIG environment variable
-        2. ./remote_config.yaml (working directory)
-        3. ~/.diagram-detector/remote_config.yaml (user config)
+        2. ./pipeline/config.yaml (working directory - detect_diagrams.remote_detection)
+        3. ./config.yaml (working directory - detect_diagrams.remote_detection or root)
+        4. ~/.diagram-detector/config.yaml (user config)
 
         Returns:
             RemoteConfig instance
@@ -186,7 +197,11 @@ class RemoteConfig:
         if env_config:
             env_path = Path(env_config).expanduser()
             if env_path.exists():
-                return cls.from_yaml(env_path)
+                # Try subsection first, fall back to root
+                try:
+                    return cls.from_yaml(env_path, key="detect_diagrams.remote_detection")
+                except (ValueError, KeyError):
+                    return cls.from_yaml(env_path)
             else:
                 raise FileNotFoundError(
                     f"Config file specified in DIAGRAM_DETECTOR_CONFIG not found: {env_path}"
@@ -194,22 +209,30 @@ class RemoteConfig:
 
         # Check standard locations
         search_paths = [
-            Path.cwd() / "remote_config.yaml",
-            Path.home() / ".diagram-detector" / "remote_config.yaml",
+            (Path.cwd() / "pipeline" / "config.yaml", "detect_diagrams.remote_detection"),
+            (Path.cwd() / "config.yaml", "detect_diagrams.remote_detection"),
+            (Path.cwd() / "config.yaml", None),  # Try root level too
+            (Path.home() / ".diagram-detector" / "config.yaml", "detect_diagrams.remote_detection"),
+            (Path.home() / ".diagram-detector" / "config.yaml", None),
         ]
 
-        for path in search_paths:
+        for path, key in search_paths:
             if path.exists():
-                return cls.from_yaml(path)
+                try:
+                    return cls.from_yaml(path, key=key)
+                except (ValueError, KeyError):
+                    # Key not found, try next location
+                    continue
 
         # No config found - provide helpful error
         raise FileNotFoundError(
-            "No remote config file found. Create one of:\n"
-            f"  - {search_paths[0]} (working directory)\n"
-            f"  - {search_paths[1]} (user config)\n"
+            "No remote detection config found. Add to one of:\n"
+            "  - ./pipeline/config.yaml (detect_diagrams.remote_detection section)\n"
+            "  - ./config.yaml (detect_diagrams.remote_detection section)\n"
+            "  - ~/.diagram-detector/config.yaml\n"
             "Or set DIAGRAM_DETECTOR_CONFIG environment variable.\n"
             "\n"
-            "See remote_config.example.yaml for template."
+            "See pipeline/config.yaml for example configuration."
         )
 
 
