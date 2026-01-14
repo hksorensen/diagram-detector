@@ -23,26 +23,45 @@ from .utils import get_image_files
 
 @dataclass
 class RemoteConfig:
-    """Configuration for remote SSH server."""
+    """
+    Configuration for remote SSH server.
 
-    host: str = "henrikkragh.dk"  # External hostname (auto-detects thinkcentre.local on LAN)
-    port: int = 8022  # External port (auto-detects 22 on local network)
-    user: str = "hkragh"
-    remote_work_dir: str = "~/diagram-detector"  # Changed to match git deployment
-    python_path: str = "~/diagram-detector/.venv/bin/python"  # Use venv python
-    endpoints: Optional[List[tuple]] = None  # List of (host, port) tuples to try in order
-    max_rsync_retries: int = 3  # Number of retry attempts for transient rsync failures
+    All fields are required - load from YAML config file using from_yaml()
+    or auto_load().
+    """
+
+    # SSH connection settings
+    user: str
+    endpoints: List[tuple]  # List of (host, port) tuples to try in order
+    max_rsync_retries: int = 3
+    connection_timeout: float = 2.0
+
+    # Remote server paths
+    remote_work_dir: str = "~/diagram-detector"
+    python_path: str = "~/diagram-detector/.venv/bin/python"
+
+    # Detection parameters (defaults, can be overridden in detector)
+    model: str = "yolo11m"
+    confidence: float = 0.35
+    iou: float = 0.30
+    imgsz: int = 640
+    batch_size: int = 1000
+    max_workers: int = 8
+
+    # Auto-detected fields (set by is_remote_available)
+    host: str = None  # Will be set to working endpoint
+    port: int = None  # Will be set to working endpoint port
 
     def __post_init__(self):
-        """Set default endpoints if not provided."""
-        if self.endpoints is None:
-            # Default endpoint fallback chain for thinkcentre server
-            # Try local network first (shortest distance), then external
-            self.endpoints = [
-                ("192.168.1.183", 22),       # Local IP (most reliable)
-                ("thinkcentre.local", 22),   # Local .local (fallback if mDNS works)
-                ("henrikkragh.dk", 8022),    # External (fallback when off-network)
-            ]
+        """Validate required fields."""
+        if not self.user:
+            raise ValueError("user is required in remote config")
+        if not self.endpoints or len(self.endpoints) == 0:
+            raise ValueError("endpoints list is required in remote config")
+
+        # Set host/port from first endpoint if not already set
+        if self.host is None or self.port is None:
+            self.host, self.port = self.endpoints[0]
 
     @property
     def ssh_target(self) -> str:
@@ -108,21 +127,26 @@ class RemoteConfig:
         Returns:
             RemoteConfig instance
 
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValueError: If required fields are missing
+
         Example YAML:
-            host: henrikkragh.dk
-            port: 8022
             user: hkragh
-            remote_work_dir: ~/diagram-detector
-            python_path: ~/diagram-detector/.venv/bin/python
-            max_rsync_retries: 3  # Number of retry attempts for transient rsync failures
             endpoints:
               - [192.168.1.183, 22]
               - [thinkcentre.local, 22]
               - [henrikkragh.dk, 8022]
+            remote_work_dir: ~/diagram-detector
+            python_path: ~/diagram-detector/.venv/bin/python
+            model: yolo11m
+            confidence: 0.35
+            iou: 0.30
+            batch_size: 1000
         """
         import yaml
 
-        config_path = Path(config_path)
+        config_path = Path(config_path).expanduser()
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -133,7 +157,60 @@ class RemoteConfig:
         if "endpoints" in data and data["endpoints"]:
             data["endpoints"] = [tuple(e) for e in data["endpoints"]]
 
+        # Remove host/port from data if present (will be set from endpoints)
+        data.pop("host", None)
+        data.pop("port", None)
+
         return cls(**data)
+
+    @classmethod
+    def auto_load(cls) -> "RemoteConfig":
+        """
+        Auto-load configuration from standard locations.
+
+        Search order:
+        1. DIAGRAM_DETECTOR_CONFIG environment variable
+        2. ./remote_config.yaml (working directory)
+        3. ~/.diagram-detector/remote_config.yaml (user config)
+
+        Returns:
+            RemoteConfig instance
+
+        Raises:
+            FileNotFoundError: If no config file found in standard locations
+        """
+        import os
+
+        # Check environment variable first
+        env_config = os.environ.get("DIAGRAM_DETECTOR_CONFIG")
+        if env_config:
+            env_path = Path(env_config).expanduser()
+            if env_path.exists():
+                return cls.from_yaml(env_path)
+            else:
+                raise FileNotFoundError(
+                    f"Config file specified in DIAGRAM_DETECTOR_CONFIG not found: {env_path}"
+                )
+
+        # Check standard locations
+        search_paths = [
+            Path.cwd() / "remote_config.yaml",
+            Path.home() / ".diagram-detector" / "remote_config.yaml",
+        ]
+
+        for path in search_paths:
+            if path.exists():
+                return cls.from_yaml(path)
+
+        # No config found - provide helpful error
+        raise FileNotFoundError(
+            "No remote config file found. Create one of:\n"
+            f"  - {search_paths[0]} (working directory)\n"
+            f"  - {search_paths[1]} (user config)\n"
+            "Or set DIAGRAM_DETECTOR_CONFIG environment variable.\n"
+            "\n"
+            "See remote_config.example.yaml for template."
+        )
 
 
 class SSHRemoteDetector:
@@ -149,12 +226,12 @@ class SSHRemoteDetector:
 
     def __init__(
         self,
-        config: Union[RemoteConfig, str],
-        batch_size: int = 1000,
-        model: str = "yolo11m",
-        confidence: float = 0.35,
-        iou: float = 0.30,
-        imgsz: int = 640,
+        config: Optional[Union[RemoteConfig, str, Path]] = None,
+        batch_size: Optional[int] = None,
+        model: Optional[str] = None,
+        confidence: Optional[float] = None,
+        iou: Optional[float] = None,
+        imgsz: Optional[int] = None,
         verbose: bool = True,
         run_id: Optional[str] = None,
         config_dir: Optional[Path] = None,
@@ -163,26 +240,38 @@ class SSHRemoteDetector:
         Initialize remote detector.
 
         Args:
-            config: RemoteConfig or connection string (user@host:port)
-            batch_size: Images per batch (1000 = ~10-20 min on GPU)
-            model: Model to use on remote
-            confidence: Confidence threshold
-            iou: IoU threshold for NMS (default: 0.30)
-            imgsz: Image size for preprocessing (default: 640)
+            config: RemoteConfig, connection string (user@host:port), path to YAML,
+                   or None to auto-load from standard locations
+            batch_size: Images per batch (defaults from config)
+            model: Model to use on remote (defaults from config)
+            confidence: Confidence threshold (defaults from config)
+            iou: IoU threshold for NMS (defaults from config)
+            imgsz: Image size for preprocessing (defaults from config)
             verbose: Print progress
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Local directory to store run config YAML (for git tracking)
         """
-        if isinstance(config, str):
-            self.config = self._parse_connection_string(config)
+        # Load config
+        if config is None:
+            self.config = RemoteConfig.auto_load()
+        elif isinstance(config, (str, Path)):
+            # Check if it's a file path or connection string
+            config_str = str(config)
+            if "@" in config_str and not Path(config_str).exists():
+                # Connection string format: user@host:port
+                self.config = self._parse_connection_string(config_str)
+            else:
+                # File path
+                self.config = RemoteConfig.from_yaml(config)
         else:
             self.config = config
 
-        self.batch_size = batch_size
-        self.model = model
-        self.confidence = confidence
-        self.iou = iou
-        self.imgsz = imgsz
+        # Use config defaults or explicit parameters
+        self.batch_size = batch_size if batch_size is not None else self.config.batch_size
+        self.model = model if model is not None else self.config.model
+        self.confidence = confidence if confidence is not None else self.config.confidence
+        self.iou = iou if iou is not None else self.config.iou
+        self.imgsz = imgsz if imgsz is not None else self.config.imgsz
         self.verbose = verbose
 
         # Generate run ID if not provided
@@ -933,9 +1022,9 @@ def is_remote_available(
     """
     import socket
 
-    # Use default config if not provided
+    # Use auto-loaded config if not provided
     if config is None:
-        config = RemoteConfig()
+        config = RemoteConfig.auto_load()
 
     # Build list of (host, port) combinations to try
     # Use endpoints from config if available, otherwise just try the primary host/port
@@ -1022,7 +1111,7 @@ def get_remote_endpoint(
         ...     # Use endpoint.host and endpoint.port for connections
     """
     if config is None:
-        config = RemoteConfig()
+        config = RemoteConfig.auto_load()
 
     if is_remote_available(config, timeout=timeout, verbose=verbose):
         return config

@@ -155,9 +155,9 @@ class PDFRemoteDetector:
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Directory to store run configs (for git tracking)
         """
-        # Use default config for local network if not provided
+        # Auto-load config if not provided
         if config is None:
-            config = RemoteConfig()  # Uses henrikkragh.dk defaults (auto-detects local)
+            config = RemoteConfig.auto_load()
 
         self.config = config
         self.batch_size = batch_size

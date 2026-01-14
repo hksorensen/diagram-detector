@@ -239,9 +239,9 @@ def deploy_to_remote(
         >>> config = RemoteConfig(host="myserver.local", port=22)
         >>> deploy_to_remote(config=config, force=True)
     """
-    # Use defaults if not provided
+    # Auto-load config if not provided
     if config is None:
-        config = RemoteConfig()
+        config = RemoteConfig.auto_load()
 
     if repo_dir is None:
         # Auto-detect: Find git root from this file
@@ -583,7 +583,7 @@ def check_remote_deployment(
         DeploymentInfo if deployed, None otherwise
     """
     if config is None:
-        config = RemoteConfig()
+        config = RemoteConfig.auto_load()
 
     info = get_remote_version(config)
 

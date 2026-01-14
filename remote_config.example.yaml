@@ -1,14 +1,15 @@
-# Remote SSH Server Configuration
-# Copy this file to remote_config.yaml and customize for your setup
+# Remote Diagram Detection Configuration
+# Copy this file to one of these locations:
+#   1. ./remote_config.yaml (working directory)
+#   2. ~/.diagram-detector/remote_config.yaml (user config)
+#   3. /path/to/your/config.yaml (specify via DIAGRAM_DETECTOR_CONFIG env var)
 
-# Primary connection details
-host: henrikkragh.dk
-port: 8022
+# ============================================================================
+# SSH CONNECTION SETTINGS
+# ============================================================================
+
+# SSH user for remote connection
 user: hkragh
-
-# Remote server paths
-remote_work_dir: ~/diagram-detector
-python_path: ~/diagram-detector/.venv/bin/python
 
 # Endpoint fallback chain
 # The detector will try these endpoints in order until one succeeds
@@ -18,6 +19,43 @@ endpoints:
   - [thinkcentre.local, 22]   # Local mDNS (fallback if IP changes)
   - [henrikkragh.dk, 8022]    # External (fallback when off-network)
 
-# Usage:
-# from diagram_detector.remote_ssh import RemoteConfig
-# config = RemoteConfig.from_yaml("remote_config.yaml")
+# Rsync retry settings
+max_rsync_retries: 3          # Number of retry attempts for transient failures
+connection_timeout: 2.0       # Seconds to wait when checking connectivity
+
+# ============================================================================
+# REMOTE SERVER PATHS
+# ============================================================================
+
+# Working directory on remote server (where code is deployed)
+remote_work_dir: ~/diagram-detector
+
+# Python interpreter path (should be in a venv with diagram-detector installed)
+python_path: ~/diagram-detector/.venv/bin/python
+
+# ============================================================================
+# DETECTION PARAMETERS
+# ============================================================================
+
+# Model settings
+model: yolo11m               # Model name (yolo11n, yolo11s, yolo11m, yolo11l, yolo11x)
+confidence: 0.35             # Confidence threshold (0.0-1.0)
+iou: 0.30                    # IoU threshold for NMS (0.0-1.0)
+imgsz: 640                   # Image size for preprocessing
+
+# Batch settings
+batch_size: 1000             # Number of images per batch (affects memory usage)
+max_workers: 8               # Parallel workers for PDF conversion
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+#
+# From Python:
+#   from diagram_detector.remote_ssh import RemoteConfig
+#   config = RemoteConfig.from_yaml("remote_config.yaml")
+#
+# From command line:
+#   export DIAGRAM_DETECTOR_CONFIG=~/.diagram-detector/remote_config.yaml
+#   python -m diagram_detector.cli --remote --input pdfs/
+#
