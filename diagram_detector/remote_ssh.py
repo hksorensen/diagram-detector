@@ -54,12 +54,48 @@ class RemoteConfig:
         """Get SSH port arguments."""
         return ["-p", str(self.port)] if self.port != 22 else []
 
+    def get_rsync_ssh_args(self, control_path: Optional[str] = None) -> List[str]:
+        """
+        Get rsync SSH arguments (uses -e for custom SSH command).
+
+        Args:
+            control_path: Optional SSH ControlMaster socket path for connection reuse
+
+        Returns:
+            List of rsync arguments including -e with SSH options
+        """
+        ssh_opts = []
+
+        # Port
+        if self.port != 22:
+            ssh_opts.append(f"-p {self.port}")
+
+        # Connection multiplexing (reuse single SSH connection for multiple rsync operations)
+        if control_path:
+            ssh_opts.extend([
+                f"-o ControlMaster=auto",
+                f"-o ControlPath={control_path}",
+                f"-o ControlPersist=600",  # Keep connection alive for 10 minutes
+            ])
+
+        # Keep-alive to detect dead connections
+        ssh_opts.extend([
+            "-o ServerAliveInterval=15",  # Send keepalive every 15s
+            "-o ServerAliveCountMax=3",    # Fail after 3 missed keepalives (45s)
+        ])
+
+        # Batch mode (don't ask for passwords/confirmations)
+        ssh_opts.append("-o BatchMode=yes")
+
+        # Combine into rsync -e argument
+        if ssh_opts:
+            return ["-e", f"ssh {' '.join(ssh_opts)}"]
+        return []
+
     @property
     def rsync_ssh_args(self) -> List[str]:
-        """Get rsync SSH arguments (uses -e for custom SSH command)."""
-        if self.port != 22:
-            return ["-e", f"ssh -p {self.port}"]
-        return []
+        """Get rsync SSH arguments without multiplexing (backward compatibility)."""
+        return self.get_rsync_ssh_args(control_path=None)
 
     @classmethod
     def from_yaml(cls, config_path: Union[str, Path]) -> "RemoteConfig":
@@ -159,8 +195,47 @@ class SSHRemoteDetector:
         self.config_dir = Path(config_dir) if config_dir else None
         self._run_config_path = None
 
+        # SSH connection multiplexing (reuse single connection for multiple rsync operations)
+        # Create control socket in temp directory
+        import os
+        control_dir = Path(tempfile.gettempdir()) / "diagram-detector-ssh"
+        control_dir.mkdir(exist_ok=True)
+        self._ssh_control_path = str(control_dir / f"control-{self.run_id}")
+
         # Verify SSH connection
         self._verify_connection()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup SSH control socket."""
+        self.cleanup()
+        return False
+
+    def cleanup(self):
+        """Clean up SSH control socket and connections."""
+        # Close SSH control master connection if it exists
+        if hasattr(self, '_ssh_control_path') and self._ssh_control_path:
+            control_path = Path(self._ssh_control_path)
+            if control_path.exists():
+                # Ask SSH to close the control master connection
+                try:
+                    cmd = [
+                        "ssh",
+                        "-O", "exit",
+                        "-o", f"ControlPath={self._ssh_control_path}",
+                    ] + self.config.ssh_port_args + [self.config.ssh_target]
+                    subprocess.run(cmd, capture_output=True, timeout=5)
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+                # Remove control socket file if it still exists
+                try:
+                    control_path.unlink()
+                except Exception:
+                    pass
 
     def _parse_connection_string(self, conn_str: str) -> RemoteConfig:
         """Parse connection string like 'user@host:port'."""
@@ -502,7 +577,7 @@ class SSHRemoteDetector:
                     "-az",
                     "--quiet",  # Always quiet - no per-file output
                 ]
-                + self.config.rsync_ssh_args
+                + self.config.get_rsync_ssh_args(self._ssh_control_path)
                 + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
             )
 
@@ -576,7 +651,7 @@ class SSHRemoteDetector:
                 "-az",
                 "--quiet",  # Always quiet - no per-file output
             ]
-            + self.config.rsync_ssh_args
+            + self.config.get_rsync_ssh_args(self._ssh_control_path)
             + [f"{self.config.ssh_target}:{remote_output}", str(batch_output)]
         )
 
