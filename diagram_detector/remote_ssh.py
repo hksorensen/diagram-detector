@@ -344,17 +344,8 @@ class SSHRemoteDetector:
         Returns:
             CompletedProcess result
         """
-        # Try Unicode spinner first, fallback to ASCII
-        try:
-            # Test if terminal supports Unicode
-            test_char = "⠋"
-            sys.stdout.write(test_char)
-            sys.stdout.write("\b")  # Backspace
-            sys.stdout.flush()
-            spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            # Fallback to ASCII spinner
-            spinner_chars = ["|", "/", "-", "\\"]
+        # Use simple ASCII spinner (reliable across all terminals)
+        spinner_chars = ["|", "/", "-", "\\"]
 
         result_container = []
         exception_container = []
@@ -372,6 +363,9 @@ class SSHRemoteDetector:
         # Start command in background thread
         thread = threading.Thread(target=run_command, daemon=True)
         thread.start()
+
+        # Ensure we start on a new line
+        print()
 
         # Show spinner while command runs
         start_time = time.time()
@@ -401,8 +395,8 @@ class SSHRemoteDetector:
 
             time.sleep(0.5)  # Check twice per second (reduced from 10x/sec)
 
-        # Clear spinner line
-        print("\r" + " " * 80 + "\r", end="", flush=True)
+        # Clear spinner line and add newline
+        print("\r" + " " * 80, flush=True)
 
         # Wait for thread to complete
         thread.join()
