@@ -351,12 +351,9 @@ class PDFRemoteDetector:
                 print("✓ All PDFs cached, no processing needed!")
             return cached_results
 
-        print (f"to_process: {to_process}")
-
         # Process in batches
         all_results = cached_results.copy()
         num_batches = (len(to_process) + self.batch_size - 1) // self.batch_size
-        print (f"num_batches: {num_batches}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             work_dir = Path(temp_dir)
@@ -371,7 +368,6 @@ class PDFRemoteDetector:
                     print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
                 # Process batch
-                print (f"batch {batch_id}: {batch_start}-{batch_end}")
                 batch_results = self._process_pdf_batch(batch_pdfs, batch_id, work_dir, auto_git_commit)
 
                 # Cache results
