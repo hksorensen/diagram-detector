@@ -1,0 +1,23 @@
+# Remote SSH Server Configuration
+# Copy this file to remote_config.yaml and customize for your setup
+
+# Primary connection details
+host: henrikkragh.dk
+port: 8022
+user: hkragh
+
+# Remote server paths
+remote_work_dir: ~/diagram-detector
+python_path: ~/diagram-detector/.venv/bin/python
+
+# Endpoint fallback chain
+# The detector will try these endpoints in order until one succeeds
+# Format: [hostname, port]
+endpoints:
+  - [192.168.1.183, 22]       # Local IP (fastest, most reliable when on same network)
+  - [thinkcentre.local, 22]   # Local mDNS (fallback if IP changes)
+  - [henrikkragh.dk, 8022]    # External (fallback when off-network)
+
+# Usage:
+# from diagram_detector.remote_ssh import RemoteConfig
+# config = RemoteConfig.from_yaml("remote_config.yaml")

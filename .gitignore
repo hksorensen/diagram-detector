@@ -45,6 +45,9 @@ models/
 data/
 results/
 
+# Config (keep example files)
+remote_config.yaml
+
 # OS
 .DS_Store
 Thumbs.db

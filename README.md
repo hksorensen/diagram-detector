@@ -125,18 +125,71 @@ for pdf in pdf_files:
 # Use in document processing pipeline
 def process_paper(pdf_path):
     detector = DiagramDetector()
-    
+
     # Detect diagrams
     results = detector.detect_pdf(pdf_path)
-    
+
     # Filter high-confidence detections
     diagrams = [r for r in results if r.confidence > 0.5]
-    
+
     # Extract for further analysis
     for diagram in diagrams:
         crop = diagram.get_crop()
         # ... process crop
 ```
+
+### Remote GPU Inference
+
+Process large batches on a remote GPU server via SSH:
+
+```python
+from diagram_detector.remote_ssh import RemoteConfig, PDFRemoteDetector
+
+# Option 1: Use default config with automatic endpoint fallback
+detector = PDFRemoteDetector()
+
+# Option 2: Load config from YAML file
+config = RemoteConfig.from_yaml("remote_config.yaml")
+detector = PDFRemoteDetector(config=config)
+
+# Option 3: Specify config directly
+config = RemoteConfig(
+    host="myserver.com",
+    port=22,
+    user="username",
+    endpoints=[
+        ("192.168.1.100", 22),    # Try local network first
+        ("myserver.com", 22),     # Fallback to external
+    ]
+)
+detector = PDFRemoteDetector(config=config)
+
+# Process PDFs on remote GPU
+results = detector.detect_pdfs(
+    pdf_paths="papers/",
+    use_cache=True,  # Cache results locally
+)
+```
+
+**Configuration File Example** (`remote_config.yaml`):
+
+```yaml
+host: myserver.com
+port: 22
+user: username
+remote_work_dir: ~/diagram-detector
+python_path: ~/diagram-detector/.venv/bin/python
+
+# Endpoint fallback chain (tries in order)
+endpoints:
+  - [192.168.1.100, 22]    # Local network (fastest)
+  - [myserver.local, 22]   # mDNS fallback
+  - [myserver.com, 22]     # External fallback
+```
+
+Copy `remote_config.example.yaml` and customize for your setup.
+
+**Performance:** Remote processing is ideal for large batches. For example, processing 10 PDFs (187 pages) achieves ~20 images/s end-to-end including upload/download over gigabit LAN.
 
 ## Performance
 

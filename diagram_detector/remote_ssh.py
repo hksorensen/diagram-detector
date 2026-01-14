@@ -28,6 +28,18 @@ class RemoteConfig:
     user: str = "hkragh"
     remote_work_dir: str = "~/diagram-detector"  # Changed to match git deployment
     python_path: str = "~/diagram-detector/.venv/bin/python"  # Use venv python
+    endpoints: Optional[List[tuple]] = None  # List of (host, port) tuples to try in order
+
+    def __post_init__(self):
+        """Set default endpoints if not provided."""
+        if self.endpoints is None:
+            # Default endpoint fallback chain for thinkcentre server
+            # Try local network first (shortest distance), then external
+            self.endpoints = [
+                ("192.168.1.183", 22),       # Local IP (most reliable)
+                ("thinkcentre.local", 22),   # Local .local (fallback if mDNS works)
+                ("henrikkragh.dk", 8022),    # External (fallback when off-network)
+            ]
 
     @property
     def ssh_target(self) -> str:
@@ -45,6 +57,43 @@ class RemoteConfig:
         if self.port != 22:
             return ["-e", f"ssh -p {self.port}"]
         return []
+
+    @classmethod
+    def from_yaml(cls, config_path: Union[str, Path]) -> "RemoteConfig":
+        """
+        Load configuration from YAML file.
+
+        Args:
+            config_path: Path to YAML config file
+
+        Returns:
+            RemoteConfig instance
+
+        Example YAML:
+            host: henrikkragh.dk
+            port: 8022
+            user: hkragh
+            remote_work_dir: ~/diagram-detector
+            python_path: ~/diagram-detector/.venv/bin/python
+            endpoints:
+              - [192.168.1.183, 22]
+              - [thinkcentre.local, 22]
+              - [henrikkragh.dk, 8022]
+        """
+        import yaml
+
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+
+        # Convert endpoints from list of lists to list of tuples
+        if "endpoints" in data and data["endpoints"]:
+            data["endpoints"] = [tuple(e) for e in data["endpoints"]]
+
+        return cls(**data)
 
 
 class SSHRemoteDetector:
@@ -685,18 +734,12 @@ def is_remote_available(
         config = RemoteConfig()
 
     # Build list of (host, port) combinations to try
-    # Always try local network first (shortest distance), then fall back to external
-    combinations = []
-
-    # Add alternates for default thinkcentre server
-    if try_alternates and config.host in ["henrikkragh.dk", "thinkcentre.local"]:
-        # Try local network first (fastest), then external as fallback
-        # Use IP address for more reliable connection (.local mDNS can be flaky)
-        combinations.append(("192.168.1.183", 22))       # Local IP (most reliable)
-        combinations.append(("thinkcentre.local", 22))   # Local .local (fallback)
-        combinations.append(("henrikkragh.dk", 8022))    # External (fallback)
+    # Use endpoints from config if available, otherwise just try the primary host/port
+    if try_alternates and config.endpoints:
+        # Try all configured endpoints in order
+        combinations = config.endpoints
     else:
-        # Non-default config: just try the specified host/port
+        # Non-default: just try the specified host/port
         combinations = [(config.host, config.port)]
 
     for host, port in combinations:
