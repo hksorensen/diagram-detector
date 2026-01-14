@@ -38,6 +38,7 @@ def _append_timing_to_csv(
     image_batch_size: int,
     remote_host: str,
     num_cached: int = 0,
+    num_detections: int = 0,
 ) -> None:
     """
     Append timing data to CSV log file.
@@ -57,6 +58,7 @@ def _append_timing_to_csv(
         image_batch_size: Images per inference batch
         remote_host: Remote server hostname
         num_cached: Number of PDFs served from cache
+        num_detections: Total number of diagrams detected
     """
     log_path = Path(log_path)
 
@@ -70,12 +72,15 @@ def _append_timing_to_csv(
     pages_per_sec = num_pages / total_time if total_time > 0 else 0
     extraction_pct = (extraction_time / total_time * 100) if total_time > 0 else 0
     inference_pct = (inference_time / total_time * 100) if total_time > 0 else 0
+    detections_per_page = num_detections / num_pages if num_pages > 0 else 0
 
     # Prepare row
     row = {
         'timestamp': timestamp.isoformat(),
         'num_pdfs': num_pdfs,
         'num_pages': num_pages,
+        'num_detections': num_detections,
+        'detections_per_page': round(detections_per_page, 3),
         'num_cached': num_cached,
         'extraction_time': round(extraction_time, 2),
         'inference_time': round(inference_time, 2),
@@ -499,11 +504,13 @@ class PDFRemoteDetector:
                     # Add to results
                     all_results.update(batch_results)
 
+                    # Count detections in this batch
+                    batch_detections = sum(
+                        sum(r.count for r in results) for results in batch_results.values()
+                    )
+
                     if self.verbose:
-                        batch_diagrams = sum(
-                            sum(r.count for r in results) for results in batch_results.values()
-                        )
-                        print(f"✓ Batch complete: {batch_diagrams} diagrams found")
+                        print(f"✓ Batch complete: {batch_detections} diagrams found")
 
                     # Log timing for this batch incrementally
                     if timing_log:
@@ -523,6 +530,7 @@ class PDFRemoteDetector:
                             image_batch_size=self.remote_detector.batch_size,
                             remote_host=self.config.host,
                             num_cached=0,  # This batch had no cached results
+                            num_detections=batch_detections,
                         )
 
         # Save results if requested
@@ -538,20 +546,22 @@ class PDFRemoteDetector:
             if self.verbose:
                 print(f"\n✓ Results saved to {output_dir}")
 
+        # Calculate totals for summary and logging
+        total_pages = sum(len(results) for results in all_results.values())
+        total_diagrams = sum(sum(r.count for r in results) for results in all_results.values())
+
         # Print summary
         if self.verbose:
-            total_pages = sum(len(results) for results in all_results.values())
             total_with_diagrams = sum(
                 sum(1 for r in results if r.has_diagram) for results in all_results.values()
             )
-            total_diagrams = sum(sum(r.count for r in results) for results in all_results.values())
 
             print(f"\n{'='*60}")
             print("PDF REMOTE INFERENCE COMPLETE")
             print(f"{'='*60}")
             print(f"Total PDFs: {len(all_results)}")
             print(f"Total pages: {total_pages:,}")
-            pct = total_with_diagrams / total_pages * 100
+            pct = total_with_diagrams / total_pages * 100 if total_pages > 0 else 0
             print(f"Pages with diagrams: {total_with_diagrams:,} ({pct:.1f}%)")
             print(f"Total diagrams: {total_diagrams:,}")
             if use_cache:
@@ -564,7 +574,6 @@ class PDFRemoteDetector:
         # Log timing data to CSV if requested (always log, even for fully cached runs)
         if timing_log:
             run_total_time = time.time() - run_start_time
-            total_pages = sum(len(results) for results in all_results.values())
 
             _append_timing_to_csv(
                 log_path=timing_log,
@@ -579,6 +588,7 @@ class PDFRemoteDetector:
                 image_batch_size=self.remote_detector.batch_size,
                 remote_host=self.config.host,
                 num_cached=len(cached_results),
+                num_detections=total_diagrams,
             )
 
             if self.verbose:
