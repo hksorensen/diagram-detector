@@ -31,6 +31,7 @@ class RemoteConfig:
     remote_work_dir: str = "~/diagram-detector"  # Changed to match git deployment
     python_path: str = "~/diagram-detector/.venv/bin/python"  # Use venv python
     endpoints: Optional[List[tuple]] = None  # List of (host, port) tuples to try in order
+    max_rsync_retries: int = 3  # Number of retry attempts for transient rsync failures
 
     def __post_init__(self):
         """Set default endpoints if not provided."""
@@ -77,6 +78,7 @@ class RemoteConfig:
             user: hkragh
             remote_work_dir: ~/diagram-detector
             python_path: ~/diagram-detector/.venv/bin/python
+            max_rsync_retries: 3  # Number of retry attempts for transient rsync failures
             endpoints:
               - [192.168.1.183, 22]
               - [thinkcentre.local, 22]
@@ -409,6 +411,57 @@ class SSHRemoteDetector:
 
         return result_container[0] if result_container else None
 
+    def _run_rsync_with_retry(
+        self,
+        cmd: List[str],
+        operation: str = "rsync"
+    ) -> subprocess.CompletedProcess:
+        """
+        Run rsync command with retry logic for transient failures.
+
+        Args:
+            cmd: rsync command as list
+            operation: Description of operation (for error messages)
+
+        Returns:
+            Completed subprocess result
+
+        Raises:
+            RuntimeError: If all retry attempts fail
+        """
+        max_attempts = self.config.max_rsync_retries
+
+        for attempt in range(1, max_attempts + 1):
+            result = subprocess.run(cmd, capture_output=True)
+
+            if result.returncode == 0:
+                return result
+
+            # Check if this is a transient error worth retrying
+            stderr = result.stderr.decode() if result.stderr else ""
+            is_transient = any(pattern in stderr.lower() for pattern in [
+                "connection closed",
+                "connection unexpectedly closed",
+                "connection refused",
+                "connection timed out",
+                "broken pipe",
+                "network is unreachable",
+                "no route to host",
+            ])
+
+            if not is_transient or attempt == max_attempts:
+                # Non-transient error or final attempt - fail immediately
+                raise RuntimeError(f"{operation.capitalize()} failed: {result.stderr}")
+
+            # Transient error - retry with exponential backoff
+            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            if self.verbose:
+                print(f"  Connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
+            time.sleep(wait_time)
+
+        # Should never reach here, but just in case
+        raise RuntimeError(f"{operation.capitalize()} failed after {max_attempts} attempts")
+
     def _setup_remote_workspace(self) -> None:
         """Setup remote workspace directory."""
         if self.verbose:
@@ -453,10 +506,8 @@ class SSHRemoteDetector:
                 + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
             )
 
-            result = subprocess.run(cmd, capture_output=True)  # Always capture
-
-            if result.returncode != 0:
-                raise RuntimeError(f"Upload failed: {result.stderr}")
+            # Upload with retry logic for transient failures
+            self._run_rsync_with_retry(cmd, operation="upload")
 
         if self.verbose:
             print(f"  ✓ Upload complete")
@@ -529,10 +580,8 @@ class SSHRemoteDetector:
             + [f"{self.config.ssh_target}:{remote_output}", str(batch_output)]
         )
 
-        result = subprocess.run(cmd, capture_output=True)  # Always capture
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Download failed: {result.stderr}")
+        # Download with retry logic for transient failures
+        self._run_rsync_with_retry(cmd, operation="download")
 
         # Copy run config to run output directory (once per run)
         if self._run_config_path and not (run_output / "config.yaml").exists():
