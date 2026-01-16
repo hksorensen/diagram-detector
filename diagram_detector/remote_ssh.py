@@ -723,15 +723,69 @@ class SSHRemoteDetector:
         mkdir_cmd = f"mkdir -p {remote_config_dir}"
         self._run_ssh_command(mkdir_cmd, check=True)
 
+        # SCP upload with retry logic for transient connection failures
         scp_cmd = [
             "scp",
             "-P", str(self.config.port),
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "BatchMode=yes",
             str(run_config_local),
             f"{self.config.user}@{self.config.host}:{remote_config_file}"
         ]
-        result = subprocess.run(scp_cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to upload config: {result.stderr.decode()}")
+
+        max_attempts = self.config.max_rsync_retries
+        last_error = None
+
+        for attempt in range(1, max_attempts + 1):
+            result = subprocess.run(scp_cmd, capture_output=True)
+
+            if result.returncode == 0:
+                break
+
+            stderr = result.stderr.decode() if result.stderr else ""
+            stdout = result.stdout.decode() if result.stdout else ""
+
+            # Check if this is a transient error worth retrying
+            is_transient = any(pattern in stderr.lower() for pattern in [
+                "connection closed",
+                "connection unexpectedly closed",
+                "connection refused",
+                "connection timed out",
+                "broken pipe",
+                "network is unreachable",
+                "no route to host",
+            ])
+
+            last_error = (
+                f"SCP upload failed (attempt {attempt}/{max_attempts})\n"
+                f"  Command: {' '.join(scp_cmd)}\n"
+                f"  Return code: {result.returncode}\n"
+                f"  Stderr: {stderr.strip() or '(empty)'}\n"
+                f"  Stdout: {stdout.strip() or '(empty)'}"
+            )
+
+            if not is_transient or attempt == max_attempts:
+                # Non-transient error or final attempt - fail with detailed message
+                # Also verify SSH connection state for better diagnostics
+                ssh_check = subprocess.run(
+                    ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, "echo OK"],
+                    capture_output=True, text=True, timeout=10
+                )
+                ssh_status = "OK" if ssh_check.returncode == 0 else f"FAILED ({ssh_check.stderr.strip()})"
+
+                raise RuntimeError(
+                    f"Failed to upload config after {attempt} attempts.\n"
+                    f"  {last_error}\n"
+                    f"  SSH connection check: {ssh_status}"
+                )
+
+            # Transient error - retry with exponential backoff
+            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            if self.verbose:
+                print(f"  ⚠ SCP connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
+                print(f"    Error: {stderr.strip()}")
+            time.sleep(wait_time)
 
         # Run inference with config file + override input/output for this batch
         cmd = (
