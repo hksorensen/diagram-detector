@@ -139,6 +139,7 @@ class PDFRemoteDetector:
         verbose: bool = True,
         run_id: Optional[str] = None,
         config_dir: Optional[Path] = None,
+        tensorrt: bool = False,
     ):
         """
         Initialize PDF remote detector.
@@ -159,6 +160,7 @@ class PDFRemoteDetector:
             verbose: Print progress
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Directory to store run configs (for git tracking)
+            tensorrt: Use TensorRT optimization on remote (NVIDIA GPU only, 2-3x faster)
         """
         # Auto-load config if not provided
         if config is None:
@@ -176,6 +178,8 @@ class PDFRemoteDetector:
         self.parallel_extract = parallel_extract
         self.max_workers = max_workers
 
+        self.tensorrt = tensorrt
+
         # Initialize SSH detector for actual remote execution
         self.remote_detector = SSHRemoteDetector(
             config=config,
@@ -187,6 +191,7 @@ class PDFRemoteDetector:
             verbose=self.verbose,  # Pass through verbose flag for detailed timing
             run_id=run_id,
             config_dir=config_dir,
+            tensorrt=tensorrt,
         )
 
         # Initialize cache with proper parameter tracking

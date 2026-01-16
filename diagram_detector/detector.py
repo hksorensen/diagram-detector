@@ -39,6 +39,7 @@ class DiagramDetector:
         verbose: bool = True,
         cache: Union[bool, "DetectionCache", None] = True,
         imgsz: int = 640,
+        tensorrt: bool = False,
     ):
         """
         Initialize detector.
@@ -53,6 +54,9 @@ class DiagramDetector:
             verbose: Print progress information
             cache: Enable caching (True=default cache, False=disabled, DetectionCache=custom)
             imgsz: Image size for preprocessing (default: 640, must match training)
+            tensorrt: Use TensorRT optimization with FP16 (default: False)
+                     Requires NVIDIA GPU. First run exports optimized engine (slow),
+                     subsequent runs use cached engine (2-3x faster inference).
 
         Examples:
             # Use a named model
@@ -151,7 +155,63 @@ class DiagramDetector:
 
         from ultralytics import YOLO
 
-        self.model = YOLO(str(model_path))
+        # Handle TensorRT optimization
+        if tensorrt:
+            if self.device not in ("cuda", "0", "1", "2", "3"):
+                # Auto-detect might have chosen cuda
+                if self.device != "auto" and not self.device.startswith("cuda"):
+                    raise ValueError(
+                        f"TensorRT requires NVIDIA GPU, but device is '{self.device}'. "
+                        f"Use device='cuda' or device='auto' with an NVIDIA GPU."
+                    )
+
+            # Get GPU name for engine filename (engines are GPU-specific)
+            try:
+                import torch
+                gpu_name = torch.cuda.get_device_name(0).replace(" ", "_").replace("/", "_")
+            except Exception:
+                gpu_name = "unknown_gpu"
+
+            # Engine path includes model name, imgsz, and GPU for uniqueness
+            engine_path = model_path.parent / f"{self.model_name}_imgsz{imgsz}_{gpu_name}.engine"
+
+            if engine_path.exists():
+                if self.verbose:
+                    print(f"✓ Loading cached TensorRT engine: {engine_path.name}")
+                self.model = YOLO(str(engine_path))
+            else:
+                if self.verbose:
+                    print(f"Exporting TensorRT engine (one-time, may take a few minutes)...")
+                    print(f"  - Model: {model_path.name}")
+                    print(f"  - GPU: {gpu_name}")
+                    print(f"  - FP16: enabled")
+
+                # Load PyTorch model first
+                pt_model = YOLO(str(model_path))
+
+                # Export to TensorRT with FP16
+                engine_result = pt_model.export(
+                    format="engine",
+                    half=True,  # FP16 for speed
+                    imgsz=imgsz,
+                    device=0,  # Use first GPU
+                    verbose=self.verbose,
+                )
+
+                # Ultralytics returns the path to the exported engine
+                exported_path = Path(engine_result)
+
+                # Move to our cache location with descriptive name
+                if exported_path.exists() and exported_path != engine_path:
+                    import shutil
+                    shutil.move(str(exported_path), str(engine_path))
+
+                if self.verbose:
+                    print(f"✓ TensorRT engine saved: {engine_path.name}")
+
+                self.model = YOLO(str(engine_path))
+        else:
+            self.model = YOLO(str(model_path))
 
         if self.verbose:
             print("✓ Model loaded")
@@ -205,6 +265,7 @@ class DiagramDetector:
             device=detector_config.get("device", "auto"),
             batch_size=detector_config.get("batch_size", "auto"),
             verbose=detector_config.get("verbose", True),
+            tensorrt=detector_config.get("tensorrt", False),
         )
 
     @classmethod

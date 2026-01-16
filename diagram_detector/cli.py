@@ -200,6 +200,12 @@ Examples:
         help="Device to use (default: auto)",
     )
 
+    parser.add_argument(
+        "--tensorrt",
+        action="store_true",
+        help="Use TensorRT optimization with FP16 (NVIDIA GPU only, 2-3x faster)",
+    )
+
     # Remote inference
     parser.add_argument(
         "--remote", type=str, help="Run inference on remote GPU via SSH (format: user@host:port)"
@@ -362,6 +368,7 @@ Examples:
                     confidence=args.confidence,
                     dpi=args.dpi,
                     verbose=not args.quiet,
+                    tensorrt=args.tensorrt,
                 )
 
                 # Process PDF
@@ -390,6 +397,7 @@ Examples:
                         confidence=args.confidence,
                         dpi=args.dpi,
                         verbose=not args.quiet,
+                        tensorrt=args.tensorrt,
                     )
 
                     # Process all PDFs
@@ -414,6 +422,7 @@ Examples:
                         model=args.model,
                         confidence=args.confidence,
                         verbose=not args.quiet,
+                        tensorrt=args.tensorrt,
                     )
 
                     # Run remote inference on images
@@ -435,6 +444,7 @@ Examples:
                     model=args.model,
                     confidence=args.confidence,
                     verbose=not args.quiet,
+                    tensorrt=args.tensorrt,
                 )
 
                 results = detector.detect(
@@ -455,6 +465,7 @@ Examples:
                 device=args.device,
                 batch_size=batch_size,
                 verbose=not args.quiet,
+                tensorrt=args.tensorrt,
             )
 
             # Run detection

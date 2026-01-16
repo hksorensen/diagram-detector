@@ -47,6 +47,7 @@ class RemoteConfig:
     imgsz: int = 640
     batch_size: int = 1000
     max_workers: int = 8
+    tensorrt: bool = False  # Use TensorRT optimization (NVIDIA GPU only)
 
     # Auto-detected fields (set by is_remote_available)
     host: str = None  # Will be set to working endpoint
@@ -258,6 +259,7 @@ class SSHRemoteDetector:
         verbose: bool = True,
         run_id: Optional[str] = None,
         config_dir: Optional[Path] = None,
+        tensorrt: Optional[bool] = None,
     ):
         """
         Initialize remote detector.
@@ -273,6 +275,7 @@ class SSHRemoteDetector:
             verbose: Print progress
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Local directory to store run config YAML (for git tracking)
+            tensorrt: Use TensorRT optimization on remote (defaults from config)
         """
         # Load config
         if config is None:
@@ -295,6 +298,7 @@ class SSHRemoteDetector:
         self.confidence = confidence if confidence is not None else self.config.confidence
         self.iou = iou if iou is not None else self.config.iou
         self.imgsz = imgsz if imgsz is not None else self.config.imgsz
+        self.tensorrt = tensorrt if tensorrt is not None else self.config.tensorrt
         self.verbose = verbose
 
         # Generate run ID if not provided
@@ -399,6 +403,7 @@ class SSHRemoteDetector:
             "iou": self.iou,
             "imgsz": self.imgsz,
             "batch_size": gpu_batch_size,
+            "tensorrt": self.tensorrt,
             "format": "json",
             "created": datetime.now().isoformat(),
             "remote": {
@@ -514,7 +519,9 @@ class SSHRemoteDetector:
 
     def _run_ssh_command(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run command on remote server."""
-        cmd = ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, command]
+        cmd = ["ssh"] + self.config.ssh_port_args \
+        + ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/dd-ssh-control-master"] \
+        + [self.config.ssh_target, command]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -585,7 +592,7 @@ class SSHRemoteDetector:
             print(f"\r{msg}", end="", flush=True)
 
             spinner_idx += 1
-            time.sleep(0.2)  # Update 5 times per second for smooth animation
+            time.sleep(0.1)  # Update 10 times per second (default .2 for smooth animation)
 
         # Clear spinner line and add newline
         print("\r" + " " * 80, flush=True)
