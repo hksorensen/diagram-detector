@@ -518,15 +518,60 @@ class SSHRemoteDetector:
             raise RuntimeError(f"SSH connection failed: {e}")
 
     def _run_ssh_command(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
-        """Run command on remote server."""
-        cmd = ["ssh"] + self.config.ssh_port_args \
-        + ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/dd-ssh-control-master"] \
-        + [self.config.ssh_target, command]
+        """Run command on remote server with retry logic for transient failures."""
+        cmd = ["ssh"] + self.config.ssh_port_args + [
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={self._ssh_control_path}",
+            "-o", "ControlPersist=600",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "BatchMode=yes",
+            self.config.ssh_target,
+            command
+        ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        max_attempts = self.config.max_rsync_retries
+        last_error = None
 
-        if check and result.returncode != 0:
-            raise RuntimeError(f"Remote command failed: {result.stderr}")
+        for attempt in range(1, max_attempts + 1):
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                return result
+
+            # Check if this is a transient error worth retrying
+            stderr = result.stderr or ""
+            is_transient = any(pattern in stderr.lower() for pattern in [
+                "connection closed",
+                "connection unexpectedly closed",
+                "connection refused",
+                "connection timed out",
+                "connection reset",
+                "broken pipe",
+                "network is unreachable",
+                "no route to host",
+            ])
+
+            last_error = (
+                f"SSH command failed (attempt {attempt}/{max_attempts})\n"
+                f"  Command: {command[:100]}{'...' if len(command) > 100 else ''}\n"
+                f"  Return code: {result.returncode}\n"
+                f"  Stderr: {stderr.strip() or '(empty)'}\n"
+                f"  Stdout: {(result.stdout or '').strip() or '(empty)'}"
+            )
+
+            if not check:
+                return result
+
+            if not is_transient or attempt == max_attempts:
+                raise RuntimeError(f"Remote command failed after {attempt} attempts.\n  {last_error}")
+
+            # Transient error - retry with exponential backoff
+            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            if self.verbose:
+                print(f"  ⚠ SSH connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
+                print(f"    Error: {stderr.strip()}")
+            time.sleep(wait_time)
 
         return result
 
