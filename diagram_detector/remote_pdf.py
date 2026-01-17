@@ -39,6 +39,8 @@ def _append_timing_to_csv(
     remote_host: str,
     num_cached: int = 0,
     num_detections: int = 0,
+    max_workers: int = 0,
+    tensorrt: bool = False,
 ) -> None:
     """
     Append timing data to CSV log file.
@@ -59,6 +61,8 @@ def _append_timing_to_csv(
         remote_host: Remote server hostname
         num_cached: Number of PDFs served from cache
         num_detections: Total number of diagrams detected
+        max_workers: Number of parallel PDF extraction workers
+        tensorrt: Whether TensorRT optimization is enabled
     """
     log_path = Path(log_path)
 
@@ -91,6 +95,8 @@ def _append_timing_to_csv(
         'model': model,
         'batch_size': batch_size,
         'image_batch_size': image_batch_size,
+        'max_workers': max_workers,
+        'tensorrt': tensorrt,
         'remote_host': remote_host,
     }
 
@@ -559,6 +565,8 @@ class PDFRemoteDetector:
                             remote_host=self.config.host,
                             num_cached=0,  # This batch had no cached results
                             num_detections=batch_detections,
+                            max_workers=self.max_workers,
+                            tensorrt=self.tensorrt,
                         )
 
         # Save results if requested
@@ -617,6 +625,8 @@ class PDFRemoteDetector:
                 remote_host=self.config.host,
                 num_cached=len(cached_results),
                 num_detections=total_diagrams,
+                max_workers=self.max_workers,
+                tensorrt=self.tensorrt,
             )
 
             if self.verbose:
