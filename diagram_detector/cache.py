@@ -140,7 +140,8 @@ class DetectionCache:
             imgsz INTEGER NOT NULL,
 
             -- Results
-            num_pages INTEGER NOT NULL,
+            num_pages_with_detections INTEGER NOT NULL,
+            total_pages INTEGER,
             results_compressed BLOB NOT NULL,
             compressed_size INTEGER NOT NULL,
 
@@ -159,6 +160,26 @@ class DetectionCache:
 
         with self.conn.transaction() as conn:
             conn.executescript(schema)
+
+            # Migration 1: Rename num_pages to num_pages_with_detections (if needed)
+            try:
+                conn.execute("SELECT num_pages_with_detections FROM detection_cache LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist - check if old num_pages exists
+                try:
+                    conn.execute("SELECT num_pages FROM detection_cache LIMIT 1")
+                    # Old column exists - rename it
+                    conn.execute("ALTER TABLE detection_cache RENAME COLUMN num_pages TO num_pages_with_detections")
+                except sqlite3.OperationalError:
+                    # Neither exists - this is a fresh database, schema already correct
+                    pass
+
+            # Migration 2: Add total_pages column if it doesn't exist
+            try:
+                conn.execute("SELECT total_pages FROM detection_cache LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                conn.execute("ALTER TABLE detection_cache ADD COLUMN total_pages INTEGER")
 
     def _compute_cache_key(
         self,
@@ -269,6 +290,7 @@ class DetectionCache:
         dpi: int,
         imgsz: int,
         results: List[Dict[str, Any]],
+        total_pages: Optional[int] = None,
     ):
         """
         Cache detection results for PDF with specific parameters.
@@ -281,6 +303,7 @@ class DetectionCache:
             dpi: DPI setting
             imgsz: Image size for preprocessing
             results: Detection results (list of dicts from DetectionResult.to_dict())
+            total_pages: Actual total page count of PDF (optional, will be extracted if not provided)
         """
         cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
         stat = pdf_path.stat()
@@ -294,7 +317,18 @@ class DetectionCache:
             results_compressed = json_bytes
 
         compressed_size = len(results_compressed)
-        num_pages = len(results)
+        num_pages_with_detections = len(results)  # Number of pages with detections (kept for filtering)
+
+        # Get total page count if not provided
+        if total_pages is None:
+            try:
+                import fitz
+                doc = fitz.open(pdf_path)
+                total_pages = doc.page_count
+                doc.close()
+            except Exception as e:
+                # If we can't get total pages, fall back to num_pages_with_detections
+                total_pages = num_pages_with_detections
 
         # Insert or replace
         self.conn.execute(
@@ -302,9 +336,9 @@ class DetectionCache:
             INSERT OR REPLACE INTO detection_cache (
                 cache_key, pdf_name, pdf_size, pdf_mtime,
                 model, confidence, iou, dpi, imgsz,
-                num_pages, results_compressed, compressed_size,
+                num_pages_with_detections, total_pages, results_compressed, compressed_size,
                 cached_at, last_accessed, access_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cache_key,
@@ -316,7 +350,8 @@ class DetectionCache:
                 round(iou, 3),
                 dpi,
                 imgsz,
-                num_pages,
+                num_pages_with_detections,
+                total_pages,
                 results_compressed,
                 compressed_size,
                 datetime.now().isoformat(),
@@ -351,7 +386,8 @@ class DetectionCache:
             SELECT
                 COUNT(*) as num_entries,
                 COUNT(DISTINCT pdf_name) as num_pdfs,
-                SUM(num_pages) as total_pages,
+                SUM(num_pages_with_detections) as total_pages_with_detections,
+                SUM(total_pages) as total_pages,
                 SUM(compressed_size) as total_bytes,
                 AVG(access_count) as avg_access_count,
                 COUNT(DISTINCT model) as num_models
@@ -363,6 +399,7 @@ class DetectionCache:
             return {
                 "num_entries": 0,
                 "num_pdfs": 0,
+                "total_pages_with_detections": 0,
                 "total_pages": 0,
                 "size_mb": 0.0,
                 "avg_access_count": 0.0,
@@ -373,10 +410,11 @@ class DetectionCache:
         return {
             "num_entries": row[0] or 0,
             "num_pdfs": row[1] or 0,
-            "total_pages": row[2] or 0,
-            "size_mb": (row[3] or 0) / 1024 / 1024,
-            "avg_access_count": row[4] or 0.0,
-            "num_models": row[5] or 0,
+            "total_pages_with_detections": row[2] or 0,
+            "total_pages": row[3] or 0,
+            "size_mb": (row[4] or 0) / 1024 / 1024,
+            "avg_access_count": row[5] or 0.0,
+            "num_models": row[6] or 0,
         }
 
     def clear(self):
@@ -485,7 +523,7 @@ class DetectionCache:
             """
             SELECT
                 cache_key, pdf_name, model, confidence, iou, dpi, imgsz,
-                num_pages, cached_at, last_accessed, access_count
+                num_pages_with_detections, total_pages, cached_at, last_accessed, access_count
             FROM detection_cache
             ORDER BY cached_at DESC
             """
@@ -501,10 +539,11 @@ class DetectionCache:
                 "iou": row[4],
                 "dpi": row[5],
                 "imgsz": row[6],
-                "num_pages": row[7],
-                "cached_at": row[8],
-                "last_accessed": row[9],
-                "access_count": row[10],
+                "num_pages_with_detections": row[7],
+                "total_pages": row[8],
+                "cached_at": row[9],
+                "last_accessed": row[10],
+                "access_count": row[11],
             })
 
         with open(output_file, 'w') as f:
