@@ -5,7 +5,7 @@ This package provides tools for detecting diagrams in academic papers,
 with support for both images and PDFs.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 __author__ = "Henrik Kragh Sørensen"
 __email__ = "hks@ku.dk"
 __license__ = "MIT"
