@@ -535,6 +535,9 @@ def convert_pdf_to_images(
     Returns:
         List of images as numpy arrays (RGB format, grayscale if enabled)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
         import fitz  # PyMuPDF
     except ImportError:
@@ -559,8 +562,6 @@ def convert_pdf_to_images(
 
     # CRITICAL: Test for 0-page PDFs (corrupted or invalid file)
     if total_pages == 0:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"PDF has 0 pages according to PyMuPDF: {pdf_path}")
         logger.error(f"  File size: {pdf_path.stat().st_size:,} bytes")
         logger.error(f"  PyMuPDF version: {fitz.version}")
