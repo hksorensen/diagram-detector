@@ -559,6 +559,19 @@ class PDFRemoteDetector:
                         batch_pdfs, batch_id, work_dir, auto_git_commit
                     )
 
+                    # Check for inference error logs (before temp dir cleanup)
+                    batch_dir = work_dir / batch_id
+                    err_files = list(batch_dir.glob("**/inference.err"))
+                    for err_file in err_files:
+                        if err_file.stat().st_size > 0:
+                            logger.error(f"=" * 70)
+                            logger.error(f"REMOTE INFERENCE ERRORS - {err_file.parent.name}")
+                            logger.error(f"=" * 70)
+                            with open(err_file, 'r') as f:
+                                for line in f:
+                                    logger.error(f"  {line.rstrip()}")
+                            logger.error(f"=" * 70)
+
                     # Accumulate timing
                     total_extraction_time += batch_extraction_time
                     total_inference_time += batch_inference_time
