@@ -454,6 +454,7 @@ class PDFRemoteDetector:
         force_reprocess: bool = False,
         auto_git_commit: bool = False,
         timing_log: Optional[Path] = None,
+        debug_max_batches: Optional[int] = None,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -541,6 +542,12 @@ class PDFRemoteDetector:
                 print("✓ All PDFs cached, no processing needed!")
         else:
             num_batches = (len(to_process) + self.batch_size - 1) // self.batch_size
+
+            # Limit batches for debugging if requested
+            if debug_max_batches is not None:
+                num_batches = min(num_batches, debug_max_batches)
+                if self.verbose:
+                    print(f"⚠ DEBUG MODE: Processing only {num_batches} batch(es)")
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 work_dir = Path(temp_dir)
