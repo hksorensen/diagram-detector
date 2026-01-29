@@ -356,7 +356,14 @@ class PDFRemoteDetector:
                 # Extraction failed - skip this PDF
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.warning(f"Skipping {pdf_name} due to extraction failure")
+                logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                continue
+
+            if len(image_paths) == 0:
+                # Extraction returned empty list - skip this PDF
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Skipping {pdf_name} due to zero pages extracted")
                 continue
 
             all_images.extend(image_paths)

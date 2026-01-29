@@ -325,7 +325,6 @@ class DetectionCache:
 
         Raises:
             TypeError: If results is not a list
-            ValueError: If results is empty (indicates extraction/inference failure)
         """
         # CRITICAL VALIDATION: Prevent caching empty results
         if not isinstance(results, list):
@@ -334,16 +333,14 @@ class DetectionCache:
         if len(results) == 0:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(
-                f"Refusing to cache empty results for {pdf_path.name}\n"
+            logger.warning(
+                f"Skipping cache for {pdf_path.name} - empty results\n"
                 f"  This indicates PDF extraction or inference failed.\n"
-                f"  Fix the underlying issue instead of caching empty results.\n"
+                f"  The PDF will be reprocessed on next run.\n"
                 f"  Model: {model}, confidence: {confidence}, iou: {iou}"
             )
-            raise ValueError(
-                f"Cannot cache empty results for {pdf_path.name} - "
-                f"this indicates extraction or inference failure"
-            )
+            # Don't cache empty results, but don't crash either - just return
+            return
 
         cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
         stat = pdf_path.stat()
