@@ -306,9 +306,23 @@ class PDFRemoteDetector:
                         image_paths = future.result()
                         pdf_images[pdf_path.name] = image_paths
                     except Exception as e:
+                        # CRITICAL: Log full exception for debugging
+                        import logging
+                        import traceback
+                        logger = logging.getLogger(__name__)
+
+                        logger.error(f"PDF extraction FAILED for {pdf_path.name}")
+                        logger.error(f"  Error: {type(e).__name__}: {e}")
+                        logger.error(f"  PDF path: {pdf_path}")
+                        logger.error(f"  PDF size: {pdf_path.stat().st_size / 1024 / 1024:.1f} MB")
+                        logger.error(f"  Traceback:\n{''.join(traceback.format_exc())}")
+
                         if self.verbose:
-                            print(f"  ✗ {pdf_path.name}: {e}")
-                        pdf_images[pdf_path.name] = []
+                            print(f"  ✗ {pdf_path.name}: {type(e).__name__}: {e}")
+
+                        # Mark as None instead of empty list
+                        # This will cause caching to skip this PDF
+                        pdf_images[pdf_path.name] = None
 
         extraction_time = time.time() - start_time
         return pdf_images, extraction_time
@@ -338,6 +352,13 @@ class PDFRemoteDetector:
         all_images = []
         pdf_page_counts = {}
         for pdf_name, image_paths in pdf_images.items():
+            if image_paths is None:
+                # Extraction failed - skip this PDF
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Skipping {pdf_name} due to extraction failure")
+                continue
+
             all_images.extend(image_paths)
             pdf_page_counts[pdf_name] = len(image_paths)
 
@@ -498,10 +519,18 @@ class PDFRemoteDetector:
                     # Cache results
                     if use_cache:
                         for pdf_path in batch_pdfs:
+                            # Skip failed PDFs (not in batch_results)
+                            if pdf_path.name not in batch_results:
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.warning(f"Not caching {pdf_path.name} - extraction/inference failed")
+                                continue
+
                             # Convert DetectionResult objects to dicts for JSON serialization
                             results_list = batch_results[pdf_path.name]
                             results_dicts = [asdict(r) for r in results_list]
 
+                            # cache.set() will now validate that results_dicts is not empty
                             self.cache.set(
                                 pdf_path,
                                 model=self.model,

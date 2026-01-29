@@ -369,7 +369,8 @@ class SSHRemoteDetector:
             host = rest
             port = 22
 
-        return RemoteConfig(host=host, port=port, user=user)
+        # Create RemoteConfig with endpoints parameter (list of tuples)
+        return RemoteConfig(user=user, endpoints=[(host, port)])
 
     def _create_run_config(self, gpu_batch_size: int = 32) -> Path:
         """
@@ -405,6 +406,7 @@ class SSHRemoteDetector:
             "batch_size": gpu_batch_size,
             "tensorrt": self.tensorrt,
             "format": "json",
+            "use_cache": False,  # PRIMARY FIX: Force remote to reprocess, never use stale cache
             "created": datetime.now().isoformat(),
             "remote": {
                 "host": self.config.host,

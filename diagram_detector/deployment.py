@@ -8,7 +8,7 @@ import subprocess
 import hashlib
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Union
 from dataclasses import dataclass
 import datetime
 

@@ -12,7 +12,7 @@ import hashlib
 from pathlib import Path
 from threading import local
 from contextlib import contextmanager
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 
 
@@ -181,6 +181,10 @@ class DetectionCache:
                 # Column doesn't exist, add it
                 conn.execute("ALTER TABLE detection_cache ADD COLUMN total_pages INTEGER")
 
+    def get_db_path(self) -> Tuple[Path, str]:
+        """Get the path to the detection cache database."""
+        return self.db_path, "detection_cache"
+
     def _compute_cache_key(
         self,
         pdf_path: Path,
@@ -279,6 +283,20 @@ class DetectionCache:
             json_bytes = results_compressed
 
         results = json.loads(json_bytes.decode('utf-8'))
+
+        # VALIDATION: Check for corrupted/empty cache entries
+        if not isinstance(results, list):
+            # Corrupted data - return None to trigger reprocessing
+            return None
+
+        if len(results) == 0:
+            # Empty array indicates extraction/inference failure
+            # Return None to force reprocessing
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Invalidating empty cache entry for {pdf_path.name} - will reprocess")
+            return None
+
         return results
 
     def set(
@@ -304,7 +322,29 @@ class DetectionCache:
             imgsz: Image size for preprocessing
             results: Detection results (list of dicts from DetectionResult.to_dict())
             total_pages: Actual total page count of PDF (optional, will be extracted if not provided)
+
+        Raises:
+            TypeError: If results is not a list
+            ValueError: If results is empty (indicates extraction/inference failure)
         """
+        # CRITICAL VALIDATION: Prevent caching empty results
+        if not isinstance(results, list):
+            raise TypeError(f"Results must be a list, got {type(results)}")
+
+        if len(results) == 0:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Refusing to cache empty results for {pdf_path.name}\n"
+                f"  This indicates PDF extraction or inference failed.\n"
+                f"  Fix the underlying issue instead of caching empty results.\n"
+                f"  Model: {model}, confidence: {confidence}, iou: {iou}"
+            )
+            raise ValueError(
+                f"Cannot cache empty results for {pdf_path.name} - "
+                f"this indicates extraction or inference failure"
+            )
+
         cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
         stat = pdf_path.stat()
 
