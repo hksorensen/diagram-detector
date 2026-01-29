@@ -473,6 +473,10 @@ def deploy_to_remote(
         if model_dir.exists():
             models = list(model_dir.glob("*.pt"))
 
+            # Exclude old/deprecated model files
+            excluded_models = {"v5.pt"}  # Old naming, use diagram-detector-v5.pt instead
+            models = [m for m in models if m.name not in excluded_models]
+
             if models:
                 # Sync each model
                 for model_path in models:
