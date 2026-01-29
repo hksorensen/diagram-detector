@@ -342,6 +342,9 @@ class PDFRemoteDetector:
         Returns:
             Tuple of (results dict, extraction_time, inference_time)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         batch_dir = work_dir / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -354,15 +357,11 @@ class PDFRemoteDetector:
         for pdf_name, image_paths in pdf_images.items():
             if image_paths is None:
                 # Extraction failed - skip this PDF
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
                 continue
 
             if len(image_paths) == 0:
                 # Extraction returned empty list - skip this PDF
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Skipping {pdf_name} due to zero pages extracted")
                 continue
 
@@ -391,7 +390,20 @@ class PDFRemoteDetector:
         result_idx = 0
 
         for pdf_path in pdf_batch:
+            # Check if PDF extraction succeeded
+            if pdf_path.name not in pdf_page_counts:
+                # PDF extraction failed - skip this PDF, don't assign empty results
+                # The PDF will not be in batch_results, preventing caching attempts
+                logger.debug(f"Skipping {pdf_path.name} - not in pdf_page_counts (extraction failed)")
+                continue
+
             num_pages = pdf_page_counts[pdf_path.name]
+
+            # Additional validation: Ensure we don't create empty results
+            if num_pages == 0:
+                logger.warning(f"Skipping {pdf_path.name} - pdf_page_counts is 0 (no pages extracted)")
+                continue
+
             pdf_result_list = results[result_idx : result_idx + num_pages]
 
             # Add page numbers
