@@ -840,6 +840,7 @@ class SSHRemoteDetector:
         err_file = f"{output_dir}/inference.err"
         cmd = (
             f"cd {self.config.remote_work_dir} && "
+            f"mkdir -p {output_dir} && "  # Ensure output dir exists for log redirection
             f"{self.config.python_path} -m diagram_detector.cli "
             f"--config {remote_config_file} "
             f"--input {input_dir} "
