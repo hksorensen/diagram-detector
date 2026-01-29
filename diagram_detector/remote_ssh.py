@@ -835,13 +835,17 @@ class SSHRemoteDetector:
             time.sleep(wait_time)
 
         # Run inference with config file + override input/output for this batch
+        # Redirect stdout/stderr to log files for debugging
+        log_file = f"{output_dir}/inference.log"
+        err_file = f"{output_dir}/inference.err"
         cmd = (
             f"cd {self.config.remote_work_dir} && "
             f"{self.config.python_path} -m diagram_detector.cli "
             f"--config {remote_config_file} "
             f"--input {input_dir} "
             f"--output {output_dir} "
-            f"--quiet"
+            f"--quiet "
+            f"> {log_file} 2> {err_file}"
         )
 
         # Run inference (show spinner if verbose)
@@ -886,8 +890,30 @@ class SSHRemoteDetector:
             if self.verbose:
                 print(f"  ✓ Run config copied to: {run_output / 'config.yaml'}")
 
+        # Check for errors in the log files
+        err_file = batch_output / "inference.err"
+        log_file = batch_output / "inference.log"
+
+        if err_file.exists() and err_file.stat().st_size > 0:
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Read error log
+            with open(err_file, 'r') as f:
+                errors = f.read()
+
+            # Log the errors
+            logger.error(f"Remote inference errors for batch {batch_id}:")
+            logger.error(f"{'='*60}")
+            for line in errors.strip().split('\n')[-50:]:  # Last 50 lines
+                logger.error(f"  {line}")
+            logger.error(f"{'='*60}")
+            logger.error(f"Full error log saved to: {err_file}")
+
         if self.verbose:
             print(f"✓ Batch {batch_id} results downloaded to: {batch_output}")
+            if log_file.exists():
+                print(f"  Log files: {log_file}, {err_file}")
 
         return batch_output
 
