@@ -361,8 +361,12 @@ class PDFRemoteDetector:
                 continue
 
             if len(image_paths) == 0:
-                # Extraction returned empty list - skip this PDF
-                logger.warning(f"Skipping {pdf_name} due to zero pages extracted")
+                # Extraction returned empty list - this should not happen!
+                # If convert_pdf_to_images returns [], it means the PDF had pages
+                # but all failed to render, which is very unusual
+                logger.error(f"UNEXPECTED: Extraction returned 0 pages for {pdf_name}")
+                logger.error(f"  This suggests all pages failed to render (very unusual)")
+                logger.error(f"  The PDF should have been caught earlier if it had 0 pages")
                 continue
 
             all_images.extend(image_paths)
@@ -400,8 +404,11 @@ class PDFRemoteDetector:
             num_pages = pdf_page_counts[pdf_path.name]
 
             # Additional validation: Ensure we don't create empty results
+            # This should NEVER happen now - kept as defense-in-depth
             if num_pages == 0:
-                logger.warning(f"Skipping {pdf_path.name} - pdf_page_counts is 0 (no pages extracted)")
+                logger.error(f"CRITICAL BUG: {pdf_path.name} has pdf_page_counts = 0")
+                logger.error(f"  This should have been caught earlier in the pipeline!")
+                logger.error(f"  Please investigate why this PDF reached this point")
                 continue
 
             pdf_result_list = results[result_idx : result_idx + num_pages]
@@ -468,7 +475,7 @@ class PDFRemoteDetector:
             print(f"Batch size: {self.batch_size} PDFs/batch")
             print(f"Model: {self.model}")
             print(f"Remote: {self.config.ssh_target}")
-            print(f"Cache: {'enabled' if use_cache else 'disabled'}")
+            print(f"Local cache: {'enabled' if use_cache else 'disabled'}")
             print(f"{'='*60}\n")
 
         # Check cache and filter

@@ -556,6 +556,23 @@ def convert_pdf_to_images(
 
     # Determine page range
     total_pages = len(doc)
+
+    # CRITICAL: Test for 0-page PDFs (corrupted or invalid file)
+    if total_pages == 0:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"PDF has 0 pages according to PyMuPDF: {pdf_path}")
+        logger.error(f"  File size: {pdf_path.stat().st_size:,} bytes")
+        logger.error(f"  PyMuPDF version: {fitz.version}")
+        try:
+            metadata = doc.metadata
+            logger.error(f"  Metadata: {metadata}")
+        except:
+            logger.error(f"  Metadata: <unable to retrieve>")
+
+        doc.close()
+        raise ValueError(f"PDF has 0 pages (corrupted or invalid file): {pdf_path.name}")
+
     start_page = (first_page - 1) if first_page else 0  # Convert to 0-indexed
     end_page = (last_page - 1) if last_page else (total_pages - 1)
 
