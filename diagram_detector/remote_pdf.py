@@ -389,6 +389,12 @@ class PDFRemoteDetector:
         if self.verbose:
             print(f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)")
 
+        # Validate inference returned correct number of results
+        if len(results) != len(all_images):
+            logger.error(f"INFERENCE MISMATCH: Expected {len(all_images)} results, got {len(results)}")
+            logger.error(f"  This indicates inference failed for {len(all_images) - len(results)} images")
+            logger.error(f"  Affected PDFs in this batch will have incomplete or empty results")
+
         # Group results by PDF
         pdf_results = {}
         result_idx = 0
@@ -412,6 +418,21 @@ class PDFRemoteDetector:
                 continue
 
             pdf_result_list = results[result_idx : result_idx + num_pages]
+
+            # CRITICAL: Check if slice returned empty results
+            # This happens when inference returned fewer results than expected
+            if len(pdf_result_list) == 0:
+                logger.error(f"INFERENCE FAILURE: No results for {pdf_path.name}")
+                logger.error(f"  Expected {num_pages} pages, got 0 from inference")
+                logger.error(f"  result_idx={result_idx}, len(results)={len(results)}")
+                logger.error(f"  This PDF will be reprocessed on next run")
+                # Don't add to pdf_results - let it be reprocessed
+                continue
+
+            # Check if inference returned fewer pages than expected
+            if len(pdf_result_list) < num_pages:
+                logger.warning(f"PARTIAL RESULTS: {pdf_path.name} got {len(pdf_result_list)}/{num_pages} pages")
+                logger.warning(f"  Some pages failed inference")
 
             # Add page numbers
             for page_num, result in enumerate(pdf_result_list, start=1):
