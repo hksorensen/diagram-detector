@@ -844,9 +844,11 @@ class SSHRemoteDetector:
             f"cd {self.config.remote_work_dir} && "
             f"mkdir -p {output_dir} && "  # Ensure output dir exists for log redirection
             f"echo 'Starting inference batch {batch_id}...' > {log_file} && "  # Test log creation
-            # Check ulimit before inference
+            # Check ulimit and GPU memory before inference
             f"echo 'File descriptor limit: '$(ulimit -n) >> {log_file} && "
             f"echo 'Processing {num_images} images' >> {log_file} && "
+            f"nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits >> {log_file} 2>/dev/null && "
+            f"echo '---' >> {log_file} && "
             # Removed dummy error string - let stderr create the file naturally
             f"{self.config.python_path} -u -m diagram_detector.cli "  # -u for unbuffered output
             f"--config {remote_config_file} "
@@ -854,7 +856,10 @@ class SSHRemoteDetector:
             f"--output {output_dir} "
             f"--quiet "
             f">> {log_file} 2>> {err_file}; "  # Semicolon to capture exit code
-            f"echo \"Exit code: $?\" >> {log_file}"  # Log exit code
+            f"EXIT_CODE=$?; "
+            f"echo \"Exit code: $EXIT_CODE\" >> {log_file}; "
+            f"nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits >> {log_file} 2>/dev/null; "
+            f"exit $EXIT_CODE"  # Preserve original exit code
         )
 
         # Run inference (show spinner if verbose)
