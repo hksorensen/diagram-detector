@@ -398,9 +398,18 @@ class PDFRemoteDetector:
 
         # Validate inference returned correct number of results
         if len(results) != len(all_images):
-            logger.error(f"INFERENCE MISMATCH: Expected {len(all_images)} results, got {len(results)}")
-            logger.error(f"  This indicates inference failed for {len(all_images) - len(results)} images")
-            logger.error(f"  Affected PDFs in this batch will have incomplete or empty results")
+            missing_count = len(all_images) - len(results)
+            logger.error(f"=" * 70)
+            logger.error(f"INFERENCE MISMATCH IN BATCH {batch_id}")
+            logger.error(f"=" * 70)
+            logger.error(f"Expected: {len(all_images)} results")
+            logger.error(f"Received: {len(results)} results")
+            logger.error(f"Missing:  {missing_count} results ({missing_count/len(all_images)*100:.1f}%)")
+            logger.error(f"")
+            logger.error(f"This indicates inference failed for {missing_count} images.")
+            logger.error(f"Check inference.err logs for details (likely OOM or model errors).")
+            logger.error(f"Affected PDFs in this batch will have incomplete or empty results.")
+            logger.error(f"=" * 70)
 
         # Group results by PDF
         pdf_results = {}
@@ -429,9 +438,18 @@ class PDFRemoteDetector:
             # CRITICAL: Check if slice returned empty results
             # This happens when inference returned fewer results than expected
             if len(pdf_result_list) == 0:
+                logger.error(f"")
                 logger.error(f"INFERENCE FAILURE: No results for {pdf_path.name}")
-                logger.error(f"  Expected {num_pages} pages, got 0 from inference")
-                logger.error(f"  result_idx={result_idx}, len(results)={len(results)}")
+                logger.error(f"  Pages extracted: {num_pages}")
+                logger.error(f"  Pages received:  0")
+                logger.error(f"  Result index:    {result_idx} (expected results at this index)")
+                logger.error(f"  Total results:   {len(results)} (inference stopped before this PDF)")
+                logger.error(f"")
+                logger.error(f"  Likely causes:")
+                logger.error(f"    - Out of memory (OOM) during inference")
+                logger.error(f"    - Model crash on corrupt/unusual images")
+                logger.error(f"    - Remote process killed")
+                logger.error(f"")
                 logger.error(f"  This PDF will be reprocessed on next run")
                 # Don't add to pdf_results - let it be reprocessed
                 continue
@@ -598,7 +616,8 @@ class PDFRemoteDetector:
                             if pdf_path.name not in batch_results:
                                 import logging
                                 logger = logging.getLogger(__name__)
-                                logger.warning(f"Not caching {pdf_path.name} - extraction/inference failed")
+                                logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
+                                logger.warning(f"  This PDF will be reprocessed on next run")
                                 continue
 
                             # Convert DetectionResult objects to dicts for JSON serialization
