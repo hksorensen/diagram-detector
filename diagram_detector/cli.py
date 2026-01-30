@@ -546,4 +546,15 @@ def print_summary(results, output_dir):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import sys
+        import traceback
+        sys.stderr.write(f"\n{'='*70}\n")
+        sys.stderr.write(f"FATAL ERROR IN CLI:\n")
+        sys.stderr.write(f"{'='*70}\n")
+        sys.stderr.write(traceback.format_exc())
+        sys.stderr.write(f"{'='*70}\n")
+        sys.stderr.flush()
+        raise
