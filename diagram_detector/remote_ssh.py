@@ -844,7 +844,7 @@ class SSHRemoteDetector:
             f"cd {self.config.remote_work_dir} && "
             f"mkdir -p {output_dir} && "  # Ensure output dir exists for log redirection
             f"echo 'Starting inference batch {batch_id}...' > {log_file} && "  # Test log creation
-            f"echo 'Batch: {batch_id}' > {err_file} && "  # Test err creation
+            # Removed dummy error string - let stderr create the file naturally
             f"{self.config.python_path} -m diagram_detector.cli "
             f"--config {remote_config_file} "
             f"--input {input_dir} "
