@@ -252,6 +252,7 @@ class SSHRemoteDetector:
         self,
         config: Optional[Union[RemoteConfig, str, Path]] = None,
         batch_size: Optional[int] = None,
+        gpu_batch_size: int = 32,
         model: Optional[str] = None,
         confidence: Optional[float] = None,
         iou: Optional[float] = None,
@@ -294,6 +295,7 @@ class SSHRemoteDetector:
 
         # Use config defaults or explicit parameters
         self.batch_size = batch_size if batch_size is not None else self.config.batch_size
+        self.gpu_batch_size = gpu_batch_size
         self.model = model if model is not None else self.config.model
         self.confidence = confidence if confidence is not None else self.config.confidence
         self.iou = iou if iou is not None else self.config.iou
@@ -979,7 +981,7 @@ class SSHRemoteDetector:
         self,
         input_path: Union[str, Path, List[Path]],
         output_dir: Optional[Path] = None,
-        gpu_batch_size: int = 32,
+        gpu_batch_size: Optional[int] = None,
         cleanup: bool = True,
         resume: bool = False,
         auto_git_commit: bool = False,
@@ -1012,6 +1014,10 @@ class SSHRemoteDetector:
 
         if not image_paths:
             raise ValueError("No images found")
+
+        # Use instance gpu_batch_size if not provided
+        if gpu_batch_size is None:
+            gpu_batch_size = self.gpu_batch_size
 
         # Setup output directory
         if output_dir is None:

@@ -133,7 +133,8 @@ class PDFRemoteDetector:
         self,
         config: Optional[RemoteConfig] = None,
         batch_size: int = 10,  # PDFs per batch
-        image_batch_size: int = 500,  # Images per upload/inference batch
+        image_batch_size: int = 500,  # Images per upload batch
+        gpu_batch_size: int = 32,  # GPU inference batch
         model: str = "yolo11m",
         confidence: float = 0.35,
         iou: float = 0.30,
@@ -153,8 +154,10 @@ class PDFRemoteDetector:
         Args:
             config: Remote configuration (None = use defaults for henrikkragh.dk)
             batch_size: PDFs per batch (10 = ~100-200 pages, good for gigabit LAN)
-            image_batch_size: Images per upload/inference batch (500 = good balance for gigabit LAN)
+            image_batch_size: Images per upload batch (500 = good balance for gigabit LAN)
                              Increase for faster networks, decrease for slow connections
+            gpu_batch_size: Images per GPU inference batch (32 = typical for 8GB VRAM)
+                           Reduce if OOM errors occur
             model: Model to use
             confidence: Confidence threshold
             iou: IoU threshold for NMS (default: 0.30, optimal from grid search)
@@ -175,6 +178,7 @@ class PDFRemoteDetector:
         self.config = config
         self.batch_size = batch_size
         self.image_batch_size = image_batch_size
+        self.gpu_batch_size = gpu_batch_size
         self.model = model
         self.confidence = confidence
         self.iou = iou
@@ -189,7 +193,8 @@ class PDFRemoteDetector:
         # Initialize SSH detector for actual remote execution
         self.remote_detector = SSHRemoteDetector(
             config=config,
-            batch_size=image_batch_size,  # Images per upload/inference batch
+            batch_size=image_batch_size,  # Images per upload batch
+            gpu_batch_size=gpu_batch_size,  # GPU inference batch
             model=model,
             confidence=confidence,
             iou=iou,
@@ -328,7 +333,8 @@ class PDFRemoteDetector:
         return pdf_images, extraction_time
 
     def _process_pdf_batch(
-        self, pdf_batch: List[Path], batch_id: str, work_dir: Path, auto_git_commit: bool = False
+        self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
+        auto_git_commit: bool = False, gpu_batch_size: int = 32
     ) -> tuple[Dict[str, List[DetectionResult]], float, float]:
         """
         Process batch of PDFs.
@@ -383,6 +389,7 @@ class PDFRemoteDetector:
             output_dir=batch_dir / "results",
             cleanup=True,
             auto_git_commit=auto_git_commit,
+            gpu_batch_size=gpu_batch_size,
         )
         inference_time = time.time() - inference_start
 
@@ -455,6 +462,7 @@ class PDFRemoteDetector:
         auto_git_commit: bool = False,
         timing_log: Optional[Path] = None,
         debug_max_batches: Optional[int] = None,
+        gpu_batch_size: int = 32,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -563,7 +571,7 @@ class PDFRemoteDetector:
 
                     # Process batch
                     batch_results, batch_extraction_time, batch_inference_time = self._process_pdf_batch(
-                        batch_pdfs, batch_id, work_dir, auto_git_commit
+                        batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size
                     )
 
                     # Check for inference error logs (before temp dir cleanup)
