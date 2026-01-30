@@ -444,6 +444,7 @@ def deploy_to_remote(
     # Verify installation
     if verbose:
         print("\n7. Verifying installation...")
+        print("  (First import may take 30-60s as PyTorch loads)")
 
     verify_cmd = [
         "ssh", "-p", str(config.port),
@@ -451,10 +452,19 @@ def deploy_to_remote(
         f"cd {config.remote_work_dir} && .venv/bin/python -c 'import diagram_detector; print(diagram_detector.__version__)'"
     ]
 
-    result = subprocess.run(verify_cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print("✗ Verification timed out after 120s")
+            print("  This may indicate missing dependencies or slow disk I/O")
+        return False
+
     if result.returncode != 0:
         if verbose:
             print("✗ Verification failed")
+            if result.stderr:
+                print(f"  Error: {result.stderr}")
         return False
 
     remote_version = result.stdout.strip()
@@ -464,6 +474,7 @@ def deploy_to_remote(
     # Verify GPU availability
     if verbose:
         print("\n8. Verifying GPU availability...")
+        print("  (Importing torch for the first time may take 30-60s)")
 
     # Build Python code with actual newlines
     python_code = (
@@ -482,7 +493,13 @@ def deploy_to_remote(
         f"cd {config.remote_work_dir} && .venv/bin/python -c {shlex.quote(python_code)}"
     ]
 
-    result = subprocess.run(gpu_check_cmd, capture_output=True, text=True, timeout=10)
+    try:
+        result = subprocess.run(gpu_check_cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print("✗ GPU verification timed out after 120s")
+            print("  This may indicate PyTorch import issues or slow disk I/O")
+        return False
 
     if result.returncode != 0:
         if verbose:
