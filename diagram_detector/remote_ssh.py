@@ -905,13 +905,22 @@ class SSHRemoteDetector:
             with open(err_file, 'r') as f:
                 errors = f.read()
 
-            # Log the errors
-            logger.error(f"Remote inference errors for batch {batch_id}:")
-            logger.error(f"{'='*60}")
-            for line in errors.strip().split('\n')[-50:]:  # Last 50 lines
-                logger.error(f"  {line}")
-            logger.error(f"{'='*60}")
-            logger.error(f"Full error log saved to: {err_file}")
+            # Filter out dummy test lines (written before inference starts)
+            error_lines = []
+            for line in errors.strip().split('\n'):
+                # Skip dummy lines that we write for testing
+                if line.startswith("Batch: "):
+                    continue
+                error_lines.append(line)
+
+            # Only log if there are actual errors (not just dummy lines)
+            if error_lines:
+                logger.error(f"Remote inference errors for batch {batch_id}:")
+                logger.error(f"{'='*60}")
+                for line in error_lines[-50:]:  # Last 50 lines
+                    logger.error(f"  {line}")
+                logger.error(f"{'='*60}")
+                logger.error(f"Full error log saved to: {err_file}")
 
         if self.verbose:
             print(f"✓ Batch {batch_id} results downloaded to: {batch_output}")
