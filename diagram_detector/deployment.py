@@ -405,13 +405,15 @@ def deploy_to_remote(
         f"{config.user}@{config.host}",
         f"cd {config.remote_work_dir} && "
         f"(test -d .venv || python3 -m venv .venv) && "
-        f".venv/bin/pip install --upgrade pip > /dev/null 2>&1"
+        f".venv/bin/pip install -q --upgrade pip"
     ]
 
-    result = subprocess.run(venv_setup_cmd)
+    result = subprocess.run(venv_setup_cmd, capture_output=not verbose, text=True)
     if result.returncode != 0:
         if verbose:
             print("✗ Virtual environment setup failed")
+            if result.stderr:
+                print(f"  Error: {result.stderr}")
         return False
 
     if verbose:
@@ -420,17 +422,20 @@ def deploy_to_remote(
     # Install package in venv
     if verbose:
         print("\n6. Installing package...")
+        print("  (This may take a few minutes if dependencies need updating)")
 
     install_cmd = [
         "ssh", "-p", str(config.port),
         f"{config.user}@{config.host}",
-        f"cd {config.remote_work_dir} && .venv/bin/pip install -e . > /dev/null 2>&1"
+        f"cd {config.remote_work_dir} && .venv/bin/pip install -q -e ."
     ]
 
-    result = subprocess.run(install_cmd)
+    result = subprocess.run(install_cmd, capture_output=not verbose, text=True)
     if result.returncode != 0:
         if verbose:
             print("✗ Installation failed")
+            if result.stderr:
+                print(f"  Error: {result.stderr}")
         return False
 
     if verbose:
