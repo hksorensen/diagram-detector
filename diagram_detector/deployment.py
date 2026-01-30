@@ -466,8 +466,8 @@ def deploy_to_remote(
         "import torch; "
         "import sys; "
         "available = torch.cuda.is_available(); "
-        "print(f\"CUDA available: {{available}}\"); "
-        "if available: print(f\"GPU: {{torch.cuda.get_device_name(0)}}\"); "
+        "print(f\"CUDA available: {available}\"); "
+        "if available: print(f\"GPU: {torch.cuda.get_device_name(0)}\"); "
         "sys.exit(0 if available else 1)"
         "'"
     ]
@@ -489,9 +489,8 @@ def deploy_to_remote(
                     print("  Error: CUDA initialization failed")
                     print("  Solution: Check NVIDIA driver installation")
                 else:
-                    # Show first line of error
-                    first_error = stderr.split('\n')[0]
-                    print(f"  Error: {first_error}")
+                    # Show full error for debugging
+                    print(f"  Error: {stderr}")
             if stdout:
                 print(f"  Details: {stdout}")
         return False
