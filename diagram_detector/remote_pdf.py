@@ -115,6 +115,67 @@ def _append_timing_to_csv(
         writer.writerow(row)
 
 
+def _log_pdf_status(
+    manifest_path: Path,
+    pdf_name: str,
+    status: str,
+    pages_extracted: int,
+    pages_detected: int,
+    num_diagrams: int,
+    error_type: str = "",
+    error_message: str = "",
+) -> None:
+    """
+    Log PDF processing status to manifest CSV.
+
+    Status codes:
+    - success: Processed with diagrams found (num_diagrams > 0)
+    - success_no_diagrams: Processed successfully, 0 diagrams (legitimate empty)
+    - extraction_failed: PDF extraction failed (0 pages extracted)
+    - inference_failed: Inference stopped early (inference mismatch, partial results)
+    - failed_empty: Result is [] - no pages at all (SHOULD NOT OCCUR)
+
+    Args:
+        manifest_path: Path to manifest CSV file
+        pdf_name: Name of the PDF file
+        status: Processing status code
+        pages_extracted: Number of pages extracted from PDF
+        pages_detected: Number of pages with detection results
+        num_diagrams: Total number of diagrams detected
+        error_type: Type of error (empty string if no error)
+        error_message: Detailed error message (empty string if no error)
+    """
+    manifest_path = Path(manifest_path)
+
+    # Check if file exists to determine if we need headers
+    file_exists = manifest_path.exists()
+
+    # Ensure parent directory exists
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Prepare row
+    row = {
+        'pdf_name': pdf_name,
+        'status': status,
+        'pages_extracted': pages_extracted,
+        'pages_detected': pages_detected,
+        'num_diagrams': num_diagrams,
+        'error_type': error_type,
+        'error_message': error_message,
+        'timestamp': datetime.now().isoformat(),
+    }
+
+    # Write to CSV with file locking
+    with open(manifest_path, 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+
+        # Write header if new file
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow(row)
+
+
 class PDFRemoteDetector:
     """
     Remote detector optimized for PDF processing.
@@ -338,7 +399,8 @@ class PDFRemoteDetector:
 
     def _process_pdf_batch(
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
-        auto_git_commit: bool = False, gpu_batch_size: int = 32
+        auto_git_commit: bool = False, gpu_batch_size: int = 32,
+        manifest_path: Optional[Path] = None
     ) -> tuple[Dict[str, List[DetectionResult]], float, float, int, int]:
         """
         Process batch of PDFs.
@@ -368,6 +430,19 @@ class PDFRemoteDetector:
             if image_paths is None:
                 # Extraction failed - skip this PDF
                 logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+
+                # Log to manifest
+                if manifest_path:
+                    _log_pdf_status(
+                        manifest_path=manifest_path,
+                        pdf_name=pdf_name,
+                        status="extraction_failed",
+                        pages_extracted=0,
+                        pages_detected=0,
+                        num_diagrams=0,
+                        error_type="ExtractionFailure",
+                        error_message="PDF extraction returned None (exception occurred)"
+                    )
                 continue
 
             if len(image_paths) == 0:
@@ -377,6 +452,19 @@ class PDFRemoteDetector:
                 logger.error(f"UNEXPECTED: Extraction returned 0 pages for {pdf_name}")
                 logger.error(f"  This suggests all pages failed to render (very unusual)")
                 logger.error(f"  The PDF should have been caught earlier if it had 0 pages")
+
+                # Log to manifest
+                if manifest_path:
+                    _log_pdf_status(
+                        manifest_path=manifest_path,
+                        pdf_name=pdf_name,
+                        status="extraction_failed",
+                        pages_extracted=0,
+                        pages_detected=0,
+                        num_diagrams=0,
+                        error_type="ZeroPages",
+                        error_message="PDF extraction returned 0 pages (all pages failed to render)"
+                    )
                 continue
 
             all_images.extend(image_paths)
@@ -455,6 +543,20 @@ class PDFRemoteDetector:
                 logger.error(f"    - Remote process killed")
                 logger.error(f"")
                 logger.error(f"  This PDF will be reprocessed on next run")
+
+                # Log to manifest
+                if manifest_path:
+                    _log_pdf_status(
+                        manifest_path=manifest_path,
+                        pdf_name=pdf_path.name,
+                        status="inference_failed",
+                        pages_extracted=num_pages,
+                        pages_detected=0,
+                        num_diagrams=0,
+                        error_type="InferenceMismatch",
+                        error_message=f"Inference stopped before this PDF (expected at index {result_idx}, but only {len(results)} results total)"
+                    )
+
                 # Don't add to pdf_results - let it be reprocessed
                 continue
 
@@ -463,12 +565,42 @@ class PDFRemoteDetector:
                 logger.warning(f"PARTIAL RESULTS: {pdf_path.name} got {len(pdf_result_list)}/{num_pages} pages")
                 logger.warning(f"  Some pages failed inference")
 
+                # Log partial result as inference_failed
+                total_diagrams = sum(r.count for r in pdf_result_list)
+                if manifest_path:
+                    _log_pdf_status(
+                        manifest_path=manifest_path,
+                        pdf_name=pdf_path.name,
+                        status="inference_failed",
+                        pages_extracted=num_pages,
+                        pages_detected=len(pdf_result_list),
+                        num_diagrams=total_diagrams,
+                        error_type="PartialResults",
+                        error_message=f"Received {len(pdf_result_list)}/{num_pages} pages (some pages failed inference)"
+                    )
+
             # Add page numbers
             for page_num, result in enumerate(pdf_result_list, start=1):
                 result.page_number = page_num
 
             pdf_results[pdf_path.name] = pdf_result_list
             result_idx += num_pages
+
+            # Log successful processing (only if not already logged as partial)
+            if manifest_path and len(pdf_result_list) == num_pages:
+                total_diagrams = sum(r.count for r in pdf_result_list)
+                status = "success" if total_diagrams > 0 else "success_no_diagrams"
+
+                _log_pdf_status(
+                    manifest_path=manifest_path,
+                    pdf_name=pdf_path.name,
+                    status=status,
+                    pages_extracted=num_pages,
+                    pages_detected=len(pdf_result_list),
+                    num_diagrams=total_diagrams,
+                    error_type="",
+                    error_message=""
+                )
 
         # Query GPU memory after inference
         gpu_mem_used, gpu_mem_free = self.remote_detector.get_gpu_memory()
@@ -488,6 +620,7 @@ class PDFRemoteDetector:
         timing_log: Optional[Path] = None,
         debug_max_batches: Optional[int] = None,
         gpu_batch_size: int = 32,
+        manifest_path: Optional[Path] = None,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -596,7 +729,7 @@ class PDFRemoteDetector:
 
                     # Process batch
                     batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free = self._process_pdf_batch(
-                        batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size
+                        batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size, manifest_path
                     )
 
                     # Check for inference error logs (before temp dir cleanup)
