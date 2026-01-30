@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import List, Union, Optional
+import gc
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -565,6 +566,10 @@ class DiagramDetector:
             )
             results.append(result)
 
+        # Force garbage collection to close file descriptors
+        # This prevents file descriptor exhaustion when processing many images
+        gc.collect()
+
         return results
 
     def _detect_image(
@@ -584,6 +589,9 @@ class DiagramDetector:
         result = self._parse_yolo_result(
             yolo_results[0], filename=filename, image=image if store_image else None
         )
+
+        # Force garbage collection to close file descriptors
+        gc.collect()
 
         return result
 
