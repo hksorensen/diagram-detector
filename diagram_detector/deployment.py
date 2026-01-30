@@ -455,11 +455,61 @@ def deploy_to_remote(
     if verbose:
         print(f"✓ Remote version: {remote_version}")
 
+    # Verify GPU availability
+    if verbose:
+        print("\n8. Verifying GPU availability...")
+
+    gpu_check_cmd = [
+        "ssh", "-p", str(config.port),
+        f"{config.user}@{config.host}",
+        f"cd {config.remote_work_dir} && .venv/bin/python -c '"
+        "import torch; "
+        "import sys; "
+        "available = torch.cuda.is_available(); "
+        "print(f\"CUDA available: {{available}}\"); "
+        "if available: print(f\"GPU: {{torch.cuda.get_device_name(0)}}\"); "
+        "sys.exit(0 if available else 1)"
+        "'"
+    ]
+
+    result = subprocess.run(gpu_check_cmd, capture_output=True, text=True, timeout=10)
+
+    if result.returncode != 0:
+        if verbose:
+            print("✗ Remote GPU not available")
+            # Parse stderr for helpful error messages
+            stderr = result.stderr.strip()
+            stdout = result.stdout.strip()
+            if stderr:
+                # Extract key error messages
+                if "forward compatibility was attempted" in stderr:
+                    print("  Error: CUDA driver/runtime version mismatch")
+                    print("  Solution: Reboot remote server or update PyTorch")
+                elif "CUDA initialization" in stderr:
+                    print("  Error: CUDA initialization failed")
+                    print("  Solution: Check NVIDIA driver installation")
+                else:
+                    # Show first line of error
+                    first_error = stderr.split('\n')[0]
+                    print(f"  Error: {first_error}")
+            if stdout:
+                print(f"  Details: {stdout}")
+        return False
+
+    # Parse and display GPU info
+    gpu_info = result.stdout.strip()
+    if verbose:
+        for line in gpu_info.split('\n'):
+            if line.startswith('CUDA available:'):
+                print(f"✓ {line}")
+            elif line.startswith('GPU:'):
+                print(f"  {line}")
+
     # Deploy models
     model_hashes = {}
     if deploy_models:
         if verbose:
-            print("\n7. Deploying models...")
+            print("\n9. Deploying models...")
 
         # Create remote model directory
         mkdir_models_cmd = [
@@ -523,7 +573,7 @@ def deploy_to_remote(
 
     # Save deployment info
     if verbose:
-        print("\n8. Saving deployment info...")
+        print("\n10. Saving deployment info...")
 
     deployment_info = DeploymentInfo(
         version=local_version,
