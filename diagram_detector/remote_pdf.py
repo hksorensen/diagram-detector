@@ -651,7 +651,18 @@ class PDFRemoteDetector:
                     )
 
                     if self.verbose:
+                        # Calculate detailed statistics
+                        batch_pages = sum(len(results) for results in batch_results.values())
+                        pages_with_diagrams = sum(
+                            sum(1 for r in results if r.has_diagram)
+                            for results in batch_results.values()
+                        )
+                        pages_pct = (pages_with_diagrams / batch_pages * 100) if batch_pages > 0 else 0
+                        avg_diagrams_per_page = batch_detections / batch_pages if batch_pages > 0 else 0
+
                         print(f"✓ Batch complete: {batch_detections} diagrams found")
+                        print(f"  Pages: {batch_pages} total, {pages_with_diagrams} with diagrams ({pages_pct:.1f}%)")
+                        print(f"  Average: {avg_diagrams_per_page:.2f} diagrams/page")
 
                         # Estimate remaining time
                         pdfs_processed = batch_end
@@ -732,6 +743,46 @@ class PDFRemoteDetector:
             pct = total_with_diagrams / total_pages * 100 if total_pages > 0 else 0
             print(f"Pages with diagrams: {total_with_diagrams:,} ({pct:.1f}%)")
             print(f"Total diagrams: {total_diagrams:,}")
+
+            # Calculate and show distribution of diagrams per page
+            from collections import Counter
+            diagram_counts = []
+            confidences = []
+            for results in all_results.values():
+                for r in results:
+                    diagram_counts.append(r.count)
+                    # Collect confidence scores from detections
+                    if r.detections:
+                        confidences.extend([d.confidence for d in r.detections])
+
+            count_dist = Counter(diagram_counts)
+            print(f"\nDiagram distribution per page:")
+            for count in sorted(count_dist.keys()):
+                num_pages = count_dist[count]
+                pct = num_pages / total_pages * 100 if total_pages > 0 else 0
+                print(f"  {count} diagrams: {num_pages:,} pages ({pct:.1f}%)")
+
+            # Show confidence statistics
+            if confidences:
+                avg_conf = sum(confidences) / len(confidences)
+                min_conf = min(confidences)
+                max_conf = max(confidences)
+                print(f"\nConfidence scores:")
+                print(f"  Average: {avg_conf:.3f}")
+                print(f"  Range: {min_conf:.3f} - {max_conf:.3f}")
+                print(f"  Threshold: {self.confidence}")
+
+            # Flag unusual patterns that might indicate issues
+            max_diagrams = max(diagram_counts) if diagram_counts else 0
+            if max_diagrams > 20:
+                print(f"\n⚠ WARNING: Found page(s) with {max_diagrams} diagrams")
+                print(f"  This may indicate false positives or threshold issues")
+
+            high_diagram_pages = [c for c in diagram_counts if c > 10]
+            if high_diagram_pages:
+                pct_high = len(high_diagram_pages) / len(diagram_counts) * 100
+                print(f"  Pages with >10 diagrams: {len(high_diagram_pages)} ({pct_high:.1f}%)")
+
             if use_cache:
                 cache_stats = self.cache.stats()
                 num_pdfs = cache_stats["num_pdfs"]
