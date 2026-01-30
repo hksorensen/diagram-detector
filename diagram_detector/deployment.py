@@ -509,11 +509,36 @@ def deploy_to_remote(
             elif line.startswith('GPU:'):
                 print(f"  {line}")
 
+    # Check file descriptor limit
+    if verbose:
+        print("\n9. Checking system limits...")
+
+    ulimit_cmd = [
+        "ssh", "-p", str(config.port),
+        f"{config.user}@{config.host}",
+        "ulimit -n"
+    ]
+    result = subprocess.run(ulimit_cmd, capture_output=True, text=True)
+
+    if result.returncode == 0:
+        try:
+            fd_limit = int(result.stdout.strip())
+            if verbose:
+                if fd_limit < 4096:
+                    print(f"⚠ File descriptor limit: {fd_limit} (recommended: 4096+)")
+                    print(f"  This may cause issues with large batches")
+                    print(f"  To fix: Add 'ulimit -n 4096' to remote ~/.bashrc")
+                else:
+                    print(f"✓ File descriptor limit: {fd_limit}")
+        except ValueError:
+            if verbose:
+                print(f"⚠ Could not parse ulimit: {result.stdout.strip()}")
+
     # Deploy models
     model_hashes = {}
     if deploy_models:
         if verbose:
-            print("\n9. Deploying models...")
+            print("\n10. Deploying models...")
 
         # Create remote model directory
         mkdir_models_cmd = [
@@ -577,7 +602,7 @@ def deploy_to_remote(
 
     # Save deployment info
     if verbose:
-        print("\n10. Saving deployment info...")
+        print("\n11. Saving deployment info...")
 
     deployment_info = DeploymentInfo(
         version=local_version,

@@ -387,7 +387,7 @@ class PDFRemoteDetector:
         results = self.remote_detector.detect(
             all_images,
             output_dir=batch_dir / "results",
-            cleanup=True,
+            cleanup=False,  # DEBUG: Disabled cleanup to inspect error logs
             auto_git_commit=auto_git_commit,
             gpu_batch_size=gpu_batch_size,
         )
