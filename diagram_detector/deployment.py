@@ -5,6 +5,7 @@ Handles deploying code and models to remote servers with git-based version track
 """
 
 import subprocess
+import shlex
 import hashlib
 import json
 from pathlib import Path
@@ -459,18 +460,21 @@ def deploy_to_remote(
     if verbose:
         print("\n8. Verifying GPU availability...")
 
+    # Build Python code with actual newlines
+    python_code = (
+        "import torch\n"
+        "import sys\n"
+        "available = torch.cuda.is_available()\n"
+        "print(f'CUDA available: {available}')\n"
+        "if available:\n"
+        "    print(f'GPU: {torch.cuda.get_device_name(0)}')\n"
+        "sys.exit(0 if available else 1)"
+    )
+
     gpu_check_cmd = [
         "ssh", "-p", str(config.port),
         f"{config.user}@{config.host}",
-        f"cd {config.remote_work_dir} && .venv/bin/python -c '"
-        "import torch\\n"
-        "import sys\\n"
-        "available = torch.cuda.is_available()\\n"
-        "print(f\\\"CUDA available: {available}\\\")\\n"
-        "if available:\\n"
-        "    print(f\\\"GPU: {torch.cuda.get_device_name(0)}\\\")\\n"
-        "sys.exit(0 if available else 1)"
-        "'"
+        f"cd {config.remote_work_dir} && .venv/bin/python -c {shlex.quote(python_code)}"
     ]
 
     result = subprocess.run(gpu_check_cmd, capture_output=True, text=True, timeout=10)
