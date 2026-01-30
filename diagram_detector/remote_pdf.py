@@ -41,6 +41,8 @@ def _append_timing_to_csv(
     num_detections: int = 0,
     max_workers: int = 0,
     tensorrt: bool = False,
+    gpu_mem_used_mb: int = 0,
+    gpu_mem_free_mb: int = 0,
 ) -> None:
     """
     Append timing data to CSV log file.
@@ -98,6 +100,8 @@ def _append_timing_to_csv(
         'max_workers': max_workers,
         'tensorrt': tensorrt,
         'remote_host': remote_host,
+        'gpu_mem_used_mb': gpu_mem_used_mb,
+        'gpu_mem_free_mb': gpu_mem_free_mb,
     }
 
     # Write to CSV
@@ -335,7 +339,7 @@ class PDFRemoteDetector:
     def _process_pdf_batch(
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
         auto_git_commit: bool = False, gpu_batch_size: int = 32
-    ) -> tuple[Dict[str, List[DetectionResult]], float, float]:
+    ) -> tuple[Dict[str, List[DetectionResult]], float, float, int, int]:
         """
         Process batch of PDFs.
 
@@ -346,7 +350,7 @@ class PDFRemoteDetector:
             auto_git_commit: Automatically git commit the run config
 
         Returns:
-            Tuple of (results dict, extraction_time, inference_time)
+            Tuple of (results dict, extraction_time, inference_time, gpu_mem_used_mb, gpu_mem_free_mb)
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -466,10 +470,13 @@ class PDFRemoteDetector:
             pdf_results[pdf_path.name] = pdf_result_list
             result_idx += num_pages
 
+        # Query GPU memory after inference
+        gpu_mem_used, gpu_mem_free = self.remote_detector.get_gpu_memory()
+
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
 
-        return pdf_results, extraction_time, inference_time
+        return pdf_results, extraction_time, inference_time, gpu_mem_used, gpu_mem_free
 
     def detect_pdfs(
         self,
@@ -588,7 +595,7 @@ class PDFRemoteDetector:
                         print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
                     # Process batch
-                    batch_results, batch_extraction_time, batch_inference_time = self._process_pdf_batch(
+                    batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free = self._process_pdf_batch(
                         batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size
                     )
 
@@ -690,6 +697,8 @@ class PDFRemoteDetector:
                             num_detections=batch_detections,
                             max_workers=self.max_workers,
                             tensorrt=self.tensorrt,
+                            gpu_mem_used_mb=gpu_mem_used,
+                            gpu_mem_free_mb=gpu_mem_free,
                         )
 
         # Save results if requested
@@ -734,6 +743,9 @@ class PDFRemoteDetector:
         if timing_log:
             run_total_time = time.time() - run_start_time
 
+            # Query final GPU memory state
+            final_gpu_mem_used, final_gpu_mem_free = self.remote_detector.get_gpu_memory()
+
             _append_timing_to_csv(
                 log_path=timing_log,
                 timestamp=datetime.now(),
@@ -750,6 +762,8 @@ class PDFRemoteDetector:
                 num_detections=total_diagrams,
                 max_workers=self.max_workers,
                 tensorrt=self.tensorrt,
+                gpu_mem_used_mb=final_gpu_mem_used,
+                gpu_mem_free_mb=final_gpu_mem_free,
             )
 
             if self.verbose:

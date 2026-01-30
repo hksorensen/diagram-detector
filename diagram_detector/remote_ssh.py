@@ -356,6 +356,39 @@ class SSHRemoteDetector:
                 except Exception:
                     pass
 
+    def get_gpu_memory(self) -> tuple[int, int]:
+        """
+        Query GPU memory usage on remote server.
+
+        Returns:
+            Tuple of (memory_used_mb, memory_free_mb)
+        """
+        cmd = [
+            "ssh"
+        ] + self.config.ssh_port_args + [
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={self._ssh_control_path}",
+            "-o", "ControlPersist=600",
+            self.config.ssh_target,
+            "nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader,nounits"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                # Parse: "3456, 4651" → (3456, 4651)
+                parts = output.split(",")
+                if len(parts) == 2:
+                    used_mb = int(parts[0].strip())
+                    free_mb = int(parts[1].strip())
+                    return used_mb, free_mb
+        except Exception:
+            pass
+
+        # Return 0,0 if query fails
+        return 0, 0
+
     def _parse_connection_string(self, conn_str: str) -> RemoteConfig:
         """Parse connection string like 'user@host:port'."""
         # user@host:port format
