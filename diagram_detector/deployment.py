@@ -463,11 +463,12 @@ def deploy_to_remote(
         "ssh", "-p", str(config.port),
         f"{config.user}@{config.host}",
         f"cd {config.remote_work_dir} && .venv/bin/python -c '"
-        "import torch; "
-        "import sys; "
-        "available = torch.cuda.is_available(); "
-        "print(f\"CUDA available: {available}\"); "
-        "if available: print(f\"GPU: {torch.cuda.get_device_name(0)}\"); "
+        "import torch\\n"
+        "import sys\\n"
+        "available = torch.cuda.is_available()\\n"
+        "print(f\\\"CUDA available: {available}\\\")\\n"
+        "if available:\\n"
+        "    print(f\\\"GPU: {torch.cuda.get_device_name(0)}\\\")\\n"
         "sys.exit(0 if available else 1)"
         "'"
     ]
