@@ -767,8 +767,20 @@ class SSHRemoteDetector:
             temp_path = Path(temp_dir)
 
             # Copy images to temp directory
+            # Check which files actually exist
+            missing_files = []
             for img_path in image_paths:
-                shutil.copy2(img_path, temp_path / img_path.name)
+                if not img_path.exists():
+                    missing_files.append(img_path)
+                else:
+                    shutil.copy2(img_path, temp_path / img_path.name)
+
+            if missing_files:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Batch {batch_id}: {len(missing_files)}/{len(image_paths)} image files don't exist!")
+                logger.warning(f"  First missing: {missing_files[0]}")
+                logger.warning(f"  Last missing: {missing_files[-1]}")
 
             # Rsync to remote (quiet - just show summary)
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
