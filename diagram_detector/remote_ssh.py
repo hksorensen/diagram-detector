@@ -759,6 +759,13 @@ class SSHRemoteDetector:
 
     def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
         """Upload batch of images via rsync."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[UPLOAD] _upload_batch called with {len(image_paths)} image paths")
+        if len(image_paths) > 0:
+            logger.info(f"[UPLOAD]   First 3: {[p.name for p in image_paths[:3]]}")
+            logger.info(f"[UPLOAD]   Last 3: {[p.name for p in image_paths[-3:]]}")
+
         if self.verbose:
             print(f"  Uploading batch {batch_id} ({len(image_paths)} images)...")
 
