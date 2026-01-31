@@ -774,16 +774,17 @@ class SSHRemoteDetector:
             temp_path = Path(temp_dir)
 
             # Copy images to temp directory with unique names
-            # Use index prefix to avoid filename collisions (e.g., multiple PDFs with page_0001.jpg)
+            # Use parent directory name to avoid filename collisions (e.g., multiple PDFs with page_0001.jpg)
             missing_files = []
             copy_errors = []
-            for idx, img_path in enumerate(image_paths):
+            for img_path in image_paths:
                 if not img_path.exists():
                     missing_files.append(img_path)
                 else:
                     try:
-                        # Use index prefix to ensure unique filenames in temp dir
-                        unique_name = f"{idx:06d}_{img_path.name}"
+                        # Use parent dir name (PDF identifier) to ensure unique filenames
+                        pdf_id = img_path.parent.name
+                        unique_name = f"{pdf_id}_{img_path.name}"
                         shutil.copy2(img_path, temp_path / unique_name)
                     except Exception as e:
                         copy_errors.append((img_path, str(e)))
