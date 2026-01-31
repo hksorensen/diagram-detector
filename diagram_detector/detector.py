@@ -551,6 +551,19 @@ class DiagramDetector:
         import warnings
         import sys
         import io
+        import subprocess
+
+        # Get current ulimit for diagnostics
+        try:
+            ulimit_result = subprocess.run(
+                ["sh", "-c", "ulimit -n"],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            current_ulimit = ulimit_result.stdout.strip() if ulimit_result.returncode == 0 else "unknown"
+        except Exception:
+            current_ulimit = "unknown"
 
         # Capture warnings and stderr to diagnose silent failures
         with warnings.catch_warnings(record=True) as warning_list:
@@ -594,14 +607,19 @@ class DiagramDetector:
                 f"YOLO INFERENCE FAILURE: Processed only {len(yolo_results)}/{len(image_paths)} images\n"
                 f"Missing: {len(image_paths) - len(yolo_results)} images were not processed\n"
                 f"\n"
+                f"System info:\n"
+                f"  File descriptor limit (ulimit -n): {current_ulimit}\n"
+                f"  Batch size: {len(image_paths)} images\n"
+                f"\n"
                 f"Likely causes:\n"
-                f"  1. File descriptor exhaustion (check ulimit -n)\n"
+                f"  1. File descriptor exhaustion (current ulimit: {current_ulimit}, need ~{len(image_paths) * 2})\n"
                 f"  2. Out of memory (GPU or system RAM)\n"
                 f"  3. Corrupted image files\n"
                 f"  4. YOLO internal error (check stderr above)\n"
                 f"\n"
-                f"Stderr output: {stderr_output if stderr_output.strip() else 'None'}\n"
-                f"Warnings: {[str(w.message) for w in warning_list] if warning_list else 'None'}\n"
+                f"Diagnostics:\n"
+                f"  Stderr output: {stderr_output if stderr_output.strip() else 'None'}\n"
+                f"  Warnings: {[str(w.message) for w in warning_list] if warning_list else 'None'}\n"
             )
             logger.error(error_msg)
             raise RuntimeError(error_msg)
