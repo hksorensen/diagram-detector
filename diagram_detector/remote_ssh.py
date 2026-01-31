@@ -769,18 +769,28 @@ class SSHRemoteDetector:
             # Copy images to temp directory
             # Check which files actually exist
             missing_files = []
+            copy_errors = []
             for img_path in image_paths:
                 if not img_path.exists():
                     missing_files.append(img_path)
                 else:
-                    shutil.copy2(img_path, temp_path / img_path.name)
+                    try:
+                        shutil.copy2(img_path, temp_path / img_path.name)
+                    except Exception as e:
+                        copy_errors.append((img_path, str(e)))
+
+            import logging
+            logger = logging.getLogger(__name__)
 
             if missing_files:
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Batch {batch_id}: {len(missing_files)}/{len(image_paths)} image files don't exist!")
                 logger.warning(f"  First missing: {missing_files[0]}")
                 logger.warning(f"  Last missing: {missing_files[-1]}")
+
+            if copy_errors:
+                logger.error(f"Batch {batch_id}: {len(copy_errors)}/{len(image_paths)} files failed to copy!")
+                logger.error(f"  First error: {copy_errors[0][0]} - {copy_errors[0][1]}")
+                logger.error(f"  Last error: {copy_errors[-1][0]} - {copy_errors[-1][1]}")
 
             # Count files in temp directory before rsync
             import logging
