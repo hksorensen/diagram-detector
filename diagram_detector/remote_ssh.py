@@ -1148,6 +1148,10 @@ class SSHRemoteDetector:
 
                 # 4. Parse results
                 results = self._parse_results(batch_results_dir)
+                if self.verbose:
+                    print(f"  ✓ Parsed {len(results)} results from batch {batch_id} (expected {len(batch_paths)})")
+                    if len(results) != len(batch_paths):
+                        print(f"    ⚠ MISMATCH: {len(batch_paths) - len(results)} results missing!")
                 all_results.extend(results)
 
                 # 5. Cleanup (optional)

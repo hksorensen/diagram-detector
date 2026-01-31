@@ -584,7 +584,7 @@ class PDFRemoteDetector:
                 result.page_number = page_num
 
             pdf_results[pdf_path.name] = pdf_result_list
-            result_idx += num_pages
+            result_idx += len(pdf_result_list)  # Use actual results received, not expected
 
             # Log successful processing (only if not already logged as partial)
             if manifest_path and len(pdf_result_list) == num_pages:
