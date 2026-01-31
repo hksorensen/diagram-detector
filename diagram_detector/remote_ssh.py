@@ -877,6 +877,9 @@ class SSHRemoteDetector:
             f"cd {self.config.remote_work_dir} && "
             f"mkdir -p {output_dir} && "  # Ensure output dir exists for log redirection
             f"echo 'Starting inference batch {batch_id}...' > {log_file} && "  # Test log creation
+            # Set file descriptor limit to prevent exhaustion with many images
+            # Must be set here since SSH non-interactive shells don't source ~/.bashrc
+            f"ulimit -n 4096 && "
             # Check ulimit and GPU memory before inference
             f"echo 'File descriptor limit: '$(ulimit -n) >> {log_file} && "
             f"echo 'Processing {num_images} images' >> {log_file} && "
