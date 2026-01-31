@@ -727,7 +727,9 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
     Returns:
         List of image file paths
     """
-    print(f"[DIAGNOSTIC] get_image_files: Scanning {directory}")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Scanning {directory}")
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
     if recursive:
@@ -742,8 +744,8 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
             files.extend(directory.glob(f"*{ext.upper()}"))
 
     files_sorted = sorted(files)
-    print(f"[DIAGNOSTIC] get_image_files: Found {len(files_sorted)} image files")
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files_sorted)} image files")
     if files_sorted:
-        print(f"[DIAGNOSTIC]   First 3: {[f.name for f in files_sorted[:3]]}")
-        print(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files_sorted[-3:]]}")
+        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files_sorted[:3]]}")
+        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files_sorted[-3:]]}")
     return files_sorted

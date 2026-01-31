@@ -761,10 +761,10 @@ class SSHRemoteDetector:
         """Upload batch of images via rsync."""
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[UPLOAD] _upload_batch called with {len(image_paths)} image paths")
+        logger.debug(f"[UPLOAD] _upload_batch called with {len(image_paths)} image paths")
         if len(image_paths) > 0:
-            logger.info(f"[UPLOAD]   First 3: {[p.name for p in image_paths[:3]]}")
-            logger.info(f"[UPLOAD]   Last 3: {[p.name for p in image_paths[-3:]]}")
+            logger.debug(f"[UPLOAD]   First 3: {[p.name for p in image_paths[:3]]}")
+            logger.debug(f"[UPLOAD]   Last 3: {[p.name for p in image_paths[-3:]]}")
 
         if self.verbose:
             print(f"  Uploading batch {batch_id} ({len(image_paths)} images)...")
@@ -806,7 +806,7 @@ class SSHRemoteDetector:
             import logging
             logger = logging.getLogger(__name__)
             temp_files = list(temp_path.glob("*.jpg")) + list(temp_path.glob("*.png"))
-            logger.info(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
+            logger.debug(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
 
             # Clear remote input directory before upload to avoid accumulation
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
@@ -832,7 +832,7 @@ class SSHRemoteDetector:
             result = self._run_ssh_command(count_cmd, check=False)
             if result.returncode == 0:
                 remote_count = int(result.stdout.strip())
-                logger.info(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after rsync (expected {len(image_paths)})")
+                logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after rsync (expected {len(image_paths)})")
                 if remote_count != len(image_paths):
                     logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
 

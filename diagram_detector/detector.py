@@ -398,7 +398,9 @@ class DiagramDetector:
         else:
             image_paths = [input_path]
 
-        print(f"[DIAGNOSTIC] detect(): Processing {len(image_paths)} image paths")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"[DIAGNOSTIC] detect(): Processing {len(image_paths)} image paths")
         if self.verbose:
             print(f"\nProcessing {len(image_paths)} image(s)...")
 
@@ -416,10 +418,10 @@ class DiagramDetector:
             batch_results = self._detect_batch(
                 batch_paths, store_images=store_images or save_crops or save_visualizations
             )
-            print(f"[DIAGNOSTIC] detect(): Batch {i//self.batch_size + 1} returned {len(batch_results)} results (expected {len(batch_paths)})")
+            logger.debug(f"[DIAGNOSTIC] detect(): Batch {i//self.batch_size + 1} returned {len(batch_results)} results (expected {len(batch_paths)})")
             results.extend(batch_results)
 
-        print(f"[DIAGNOSTIC] detect(): Returning {len(results)} total results")
+        logger.debug(f"[DIAGNOSTIC] detect(): Returning {len(results)} total results")
         return results
 
     def detect_pdf(
@@ -749,7 +751,9 @@ class DiagramDetector:
         if format == "json":
             # Save as JSON
             data = [r.to_dict() for r in results]
-            print(f"[DIAGNOSTIC] save_results(): Saving {len(data)} results to JSON")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"[DIAGNOSTIC] save_results(): Saving {len(data)} results to JSON")
             output_path = output_dir / "detections.json"
             save_json(data, output_path)
 
