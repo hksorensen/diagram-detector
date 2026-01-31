@@ -782,6 +782,12 @@ class SSHRemoteDetector:
                 logger.warning(f"  First missing: {missing_files[0]}")
                 logger.warning(f"  Last missing: {missing_files[-1]}")
 
+            # Count files in temp directory before rsync
+            import logging
+            logger = logging.getLogger(__name__)
+            temp_files = list(temp_path.glob("*.jpg")) + list(temp_path.glob("*.png"))
+            logger.info(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
+
             # Rsync to remote (quiet - just show summary)
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
 
@@ -797,6 +803,15 @@ class SSHRemoteDetector:
 
             # Upload with retry logic for transient failures
             self._run_rsync_with_retry(cmd, operation="upload")
+
+            # Verify upload - count files on remote
+            count_cmd = f"ls {remote_input} | wc -l"
+            result = self._run_ssh_command(count_cmd, check=False)
+            if result.returncode == 0:
+                remote_count = int(result.stdout.strip())
+                logger.info(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after rsync (expected {len(image_paths)})")
+                if remote_count != len(image_paths):
+                    logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
 
         if self.verbose:
             print(f"  ✓ Upload complete")
