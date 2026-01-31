@@ -807,9 +807,12 @@ class SSHRemoteDetector:
             temp_files = list(temp_path.glob("*.jpg")) + list(temp_path.glob("*.png"))
             logger.info(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
 
-            # Rsync to remote (quiet - just show summary)
+            # Clear remote input directory before upload to avoid accumulation
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
+            cleanup_cmd = f"rm -rf {remote_input} && mkdir -p {remote_input}"
+            self._run_ssh_command(cleanup_cmd, check=True)
 
+            # Rsync to remote (quiet - just show summary)
             cmd = (
                 [
                     "rsync",
