@@ -547,16 +547,64 @@ class DiagramDetector:
         else:
             images = None
 
-        # Run YOLO inference
-        yolo_results = self.model.predict(
-            source=[str(p) for p in image_paths],
-            conf=self.confidence,
-            iou=self.iou,
-            device=self.device,
-            verbose=False,
-            stream=False,
-            imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
-        )
+        # Run YOLO inference with error handling
+        import warnings
+        import sys
+        import io
+
+        # Capture warnings and stderr to diagnose silent failures
+        with warnings.catch_warnings(record=True) as warning_list:
+            warnings.simplefilter("always")
+
+            # Capture stderr (YOLO might write errors there)
+            old_stderr = sys.stderr
+            stderr_capture = io.StringIO()
+            sys.stderr = stderr_capture
+
+            try:
+                yolo_results = self.model.predict(
+                    source=[str(p) for p in image_paths],
+                    conf=self.confidence,
+                    iou=self.iou,
+                    device=self.device,
+                    verbose=False,
+                    stream=False,
+                    imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
+                )
+            except Exception as e:
+                sys.stderr = old_stderr
+                logger.error(f"YOLO predict() raised exception: {e}")
+                raise
+            finally:
+                sys.stderr = old_stderr
+                stderr_output = stderr_capture.getvalue()
+
+        # Check for warnings or stderr output
+        if warning_list:
+            for w in warning_list:
+                logger.warning(f"YOLO warning during predict(): {w.message}")
+
+        if stderr_output.strip():
+            logger.warning(f"YOLO stderr output: {stderr_output.strip()}")
+
+        # CRITICAL: Verify all images were processed
+        # YOLO can silently return fewer results if it hits resource limits
+        if len(yolo_results) != len(image_paths):
+            error_msg = (
+                f"YOLO INFERENCE FAILURE: Processed only {len(yolo_results)}/{len(image_paths)} images\n"
+                f"Missing: {len(image_paths) - len(yolo_results)} images were not processed\n"
+                f"\n"
+                f"Likely causes:\n"
+                f"  1. File descriptor exhaustion (check ulimit -n)\n"
+                f"  2. Out of memory (GPU or system RAM)\n"
+                f"  3. Corrupted image files\n"
+                f"  4. YOLO internal error (check stderr above)\n"
+                f"\n"
+                f"Stderr output: {stderr_output if stderr_output.strip() else 'None'}\n"
+                f"Warnings: {[str(w.message) for w in warning_list] if warning_list else 'None'}\n"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         # Parse results
         results = []
