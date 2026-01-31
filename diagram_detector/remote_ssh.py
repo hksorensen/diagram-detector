@@ -773,16 +773,18 @@ class SSHRemoteDetector:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            # Copy images to temp directory
-            # Check which files actually exist
+            # Copy images to temp directory with unique names
+            # Use index prefix to avoid filename collisions (e.g., multiple PDFs with page_0001.jpg)
             missing_files = []
             copy_errors = []
-            for img_path in image_paths:
+            for idx, img_path in enumerate(image_paths):
                 if not img_path.exists():
                     missing_files.append(img_path)
                 else:
                     try:
-                        shutil.copy2(img_path, temp_path / img_path.name)
+                        # Use index prefix to ensure unique filenames in temp dir
+                        unique_name = f"{idx:06d}_{img_path.name}"
+                        shutil.copy2(img_path, temp_path / unique_name)
                     except Exception as e:
                         copy_errors.append((img_path, str(e)))
 
