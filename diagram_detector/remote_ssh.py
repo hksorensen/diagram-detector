@@ -904,7 +904,14 @@ class SSHRemoteDetector:
 
                 if self.verbose and len(file_groups) > 1:
                     from tqdm import tqdm
-                    progress = tqdm(total=len(file_groups), desc=f"  Uploading {num_files} files", unit="stream", leave=False)
+                    # Don't show ETA - streams run in parallel so time estimate is misleading
+                    progress = tqdm(
+                        total=len(file_groups),
+                        desc=f"  Uploading {num_files} files",
+                        unit="stream",
+                        leave=False,
+                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} streams'
+                    )
 
                 with ThreadPoolExecutor(max_workers=num_parallel) as executor:
                     futures = {
