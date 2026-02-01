@@ -338,6 +338,10 @@ class SSHRemoteDetector:
         # Verify SSH connection
         self._verify_connection()
 
+        # Measure network throughput (useful for understanding upload bottlenecks)
+        if verbose:
+            self._measure_network_throughput()
+
     def __enter__(self):
         """Context manager entry."""
         return self
@@ -575,6 +579,65 @@ class SSHRemoteDetector:
             raise RuntimeError("SSH connection timed out")
         except Exception as e:
             raise RuntimeError(f"SSH connection failed: {e}")
+
+    def _measure_network_throughput(self) -> None:
+        """
+        Measure network upload throughput using a test file.
+
+        Uploads a 5MB test file and reports speed in MB/s.
+        """
+        import tempfile
+        import time
+
+        # Create 5MB test file
+        test_size_mb = 5
+        test_size_bytes = test_size_mb * 1024 * 1024
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+                # Write random data
+                f.write(b'0' * test_size_bytes)
+                test_file = Path(f.name)
+
+            # Remote test location
+            remote_test_dir = f"{self.config.remote_work_dir}/test"
+            self._run_ssh_command(f"mkdir -p {remote_test_dir}", check=True)
+
+            # Upload test file with rsync
+            print(f"Measuring network throughput ({test_size_mb}MB test upload)...", end='', flush=True)
+
+            start_time = time.time()
+            cmd = (
+                [
+                    "rsync",
+                    "-a",
+                    "--quiet",
+                ]
+                + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                + [str(test_file), f"{self.config.ssh_target}:{remote_test_dir}/"]
+            )
+
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            upload_time = time.time() - start_time
+
+            if result.returncode == 0 and upload_time > 0:
+                throughput_mbps = test_size_mb / upload_time
+                print(f" {throughput_mbps:.2f} MB/s")
+
+                # Estimate how long 250 files (~250MB typical batch) should take
+                typical_batch_mb = 250 * 1  # Assume ~1MB per image
+                estimated_time = typical_batch_mb / throughput_mbps
+                print(f"  Estimated upload time for typical batch (250 files, ~250MB): {estimated_time:.1f}s")
+            else:
+                print(" (test failed)")
+
+            # Cleanup
+            test_file.unlink(missing_ok=True)
+            self._run_ssh_command(f"rm -rf {remote_test_dir}", check=False)
+
+        except Exception as e:
+            print(f" (error: {e})")
+            # Don't fail initialization on throughput test failure
 
     def _run_ssh_command(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run command on remote server with retry logic for transient failures."""
