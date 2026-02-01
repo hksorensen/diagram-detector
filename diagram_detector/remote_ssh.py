@@ -835,123 +835,29 @@ class SSHRemoteDetector:
             cleanup_cmd = f"rm -rf {remote_input} && mkdir -p {remote_input}"
             self._run_ssh_command(cleanup_cmd, check=True)
 
-            # Upload via parallel tar+pipe (much faster than rsync for many small files)
+            # Upload via rsync
             upload_start = time.time()
-            files_to_upload = list(temp_path.glob("*"))
-            num_files = len(files_to_upload)
+            num_files = len(list(temp_path.glob("*")))
 
-            logger.debug(f"[UPLOAD] Starting upload of {num_files} files via parallel tar+pipe")
+            logger.debug(f"[UPLOAD] Starting rsync upload of {num_files} files")
 
             if num_files == 0:
                 logger.warning(f"No files to upload for batch {batch_id}")
             else:
-                # Split files into groups for parallel upload
-                # Use 5 parallel streams (safe for typical SSH MaxSessions limit)
-                num_parallel = min(5, num_files)  # Don't create more groups than files
-                files_per_group = (num_files + num_parallel - 1) // num_parallel  # Ceiling division
+                if self.verbose:
+                    print(f"  Uploading {num_files} files...")
 
-                file_groups = []
-                for i in range(num_parallel):
-                    start_idx = i * files_per_group
-                    end_idx = min((i + 1) * files_per_group, num_files)
-                    if start_idx < num_files:
-                        file_groups.append(files_to_upload[start_idx:end_idx])
-
-                logger.debug(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel streams")
-
-                # Upload each group in parallel using tar+pipe
-                def upload_file_group(group_idx: int, files: List[Path]) -> tuple:
-                    """Upload a group of files via tar+pipe, return (success, error)."""
-                    try:
-                        # Create tar of these files and pipe through SSH to extract on remote
-                        # tar -C local_dir -c file1 file2 ... | ssh remote 'cd remote_dir && tar -x'
-                        filenames = [f.name for f in files]
-
-                        tar_cmd = ["tar", "-C", str(temp_path), "-c"] + filenames
-                        ssh_cmd = [
-                            "ssh",
-                            "-p", str(self.config.port),
-                            "-o", "ServerAliveInterval=15",
-                            "-o", "ServerAliveCountMax=3",
-                            "-o", "BatchMode=yes",
-                            f"{self.config.user}@{self.config.host}",
-                            f"cd {remote_input} && tar -x"
-                        ]
-
-                        # Run tar and pipe to SSH
-                        tar_proc = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        tar_proc.stdout.close()  # Allow tar to receive SIGPIPE if ssh dies
-
-                        # Wait for completion (5 minutes per group should be plenty)
-                        # ~50 files per group, even at slow 1 file/sec = 50 seconds
-                        ssh_stdout, ssh_stderr = ssh_proc.communicate(timeout=300)
-                        tar_stdout, tar_stderr = tar_proc.communicate()
-
-                        # Check both processes for errors
-                        if ssh_proc.returncode != 0 or tar_proc.returncode != 0:
-                            error_msg = f"tar rc={tar_proc.returncode}, ssh rc={ssh_proc.returncode}"
-                            if tar_stderr:
-                                error_msg += f", tar stderr={tar_stderr.decode()[:200]}"
-                            if ssh_stderr:
-                                error_msg += f", ssh stderr={ssh_stderr.decode()[:200]}"
-                            return (False, error_msg)
-
-                        return (True, None)
-                    except Exception as e:
-                        return (False, str(e))
-
-                # Upload groups in parallel with progress tracking
-                upload_errors = []
-                completed_groups = 0
-
-                if self.verbose and len(file_groups) > 1:
-                    from tqdm import tqdm
-                    # Don't show ETA - streams run in parallel so time estimate is misleading
-                    progress = tqdm(
-                        total=len(file_groups),
-                        desc=f"  Uploading {num_files} files",
-                        unit="stream",
-                        leave=False,
-                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} streams'
-                    )
-
-                with ThreadPoolExecutor(max_workers=num_parallel) as executor:
-                    futures = {
-                        executor.submit(upload_file_group, idx, group): idx
-                        for idx, group in enumerate(file_groups)
-                    }
-
-                    for future in as_completed(futures):
-                        group_idx = futures[future]
-                        success, error = future.result()
-
-                        if not success:
-                            logger.error(f"Upload group {group_idx} failed: {error}")
-                            upload_errors.append((group_idx, error))
-
-                        completed_groups += 1
-                        if self.verbose and len(file_groups) > 1:
-                            progress.update(1)
-
-                if self.verbose and len(file_groups) > 1:
-                    progress.close()
-
-                if upload_errors:
-                    logger.error(f"{len(upload_errors)}/{len(file_groups)} upload streams failed")
-                    logger.warning("Falling back to rsync...")
-
-                    # Fallback to rsync
-                    cmd = (
-                        [
-                            "rsync",
-                            "-a",  # No compression (JPGs already compressed)
-                            "--quiet",
-                        ]
-                        + self.config.get_rsync_ssh_args(self._ssh_control_path)
-                        + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
-                    )
-                    self._run_rsync_with_retry(cmd, operation="upload")
+                # Use rsync (reliable and well-tested)
+                cmd = (
+                    [
+                        "rsync",
+                        "-a",  # No compression (JPGs already compressed)
+                        "--quiet",
+                    ]
+                    + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                    + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+                )
+                self._run_rsync_with_retry(cmd, operation="upload")
 
                 upload_time = time.time() - upload_start
                 logger.debug(f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
@@ -986,6 +892,13 @@ class SSHRemoteDetector:
         input_dir = f"{self.config.remote_work_dir}/input/{batch_id}"
         output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"
         remote_config_dir = f"{self.config.remote_work_dir}/configs"
+
+        # Debug: Check what's actually in the input directory before inference
+        import logging
+        logger = logging.getLogger(__name__)
+        debug_cmd = f"ls -la {input_dir} | head -20"
+        debug_result = self._run_ssh_command(debug_cmd, check=False)
+        logger.debug(f"[INFERENCE] Input directory before inference:\n{debug_result.stdout}")
         remote_config_file = f"{remote_config_dir}/{self.run_id}.yaml"
 
         # Upload run config to remote (idempotent - ok to upload multiple times)
