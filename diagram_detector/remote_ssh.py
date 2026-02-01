@@ -883,8 +883,9 @@ class SSHRemoteDetector:
                         ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         tar_proc.stdout.close()  # Allow tar to receive SIGPIPE if ssh dies
 
-                        # Wait for completion
-                        ssh_stdout, ssh_stderr = ssh_proc.communicate(timeout=60)
+                        # Wait for completion (5 minutes per group should be plenty)
+                        # ~50 files per group, even at slow 1 file/sec = 50 seconds
+                        ssh_stdout, ssh_stderr = ssh_proc.communicate(timeout=300)
                         tar_proc.wait()
 
                         if ssh_proc.returncode != 0 or tar_proc.returncode != 0:
