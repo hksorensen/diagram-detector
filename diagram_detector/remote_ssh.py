@@ -886,12 +886,15 @@ class SSHRemoteDetector:
                         # Wait for completion (5 minutes per group should be plenty)
                         # ~50 files per group, even at slow 1 file/sec = 50 seconds
                         ssh_stdout, ssh_stderr = ssh_proc.communicate(timeout=300)
-                        tar_proc.wait()
+                        tar_stdout, tar_stderr = tar_proc.communicate()
 
+                        # Check both processes for errors
                         if ssh_proc.returncode != 0 or tar_proc.returncode != 0:
                             error_msg = f"tar rc={tar_proc.returncode}, ssh rc={ssh_proc.returncode}"
+                            if tar_stderr:
+                                error_msg += f", tar stderr={tar_stderr.decode()[:200]}"
                             if ssh_stderr:
-                                error_msg += f", stderr={ssh_stderr.decode()[:200]}"
+                                error_msg += f", ssh stderr={ssh_stderr.decode()[:200]}"
                             return (False, error_msg)
 
                         return (True, None)
@@ -936,7 +939,19 @@ class SSHRemoteDetector:
 
                 if upload_errors:
                     logger.error(f"{len(upload_errors)}/{len(file_groups)} upload streams failed")
-                    raise RuntimeError(f"Parallel tar+pipe upload failed: {upload_errors[0][1]}")
+                    logger.warning("Falling back to rsync...")
+
+                    # Fallback to rsync
+                    cmd = (
+                        [
+                            "rsync",
+                            "-a",  # No compression (JPGs already compressed)
+                            "--quiet",
+                        ]
+                        + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                        + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+                    )
+                    self._run_rsync_with_retry(cmd, operation="upload")
 
                 upload_time = time.time() - upload_start
                 logger.debug(f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
@@ -951,6 +966,15 @@ class SSHRemoteDetector:
                 logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after upload (expected {len(image_paths)})")
                 if remote_count != len(image_paths):
                     logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
+                    # List what files are actually there
+                    ls_result = self._run_ssh_command(f"ls -la {remote_input}", check=False)
+                    logger.error(f"[UPLOAD] Remote directory contents:\n{ls_result.stdout}")
+                    raise RuntimeError(f"Upload verification failed: expected {len(image_paths)} files, found {remote_count}")
+            else:
+                logger.error(f"[UPLOAD] Failed to verify upload - ls command failed")
+                logger.error(f"  Return code: {result.returncode}")
+                logger.error(f"  Stderr: {result.stderr}")
+                raise RuntimeError(f"Upload verification failed: ls command returned {result.returncode}")
 
     def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32, num_images: int = 0) -> None:
         """Run inference on batch using run-level config."""
