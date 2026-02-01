@@ -17,6 +17,13 @@ import threading
 import sys
 from datetime import datetime
 
+try:
+    from network_utils import SFTPUploader
+    SFTP_AVAILABLE = True
+except ImportError:
+    SFTP_AVAILABLE = False
+    SFTPUploader = None
+
 from .models import DetectionResult, DiagramDetection
 from .utils import get_image_files
 
@@ -321,6 +328,24 @@ class SSHRemoteDetector:
         socket_name = f"dd-{os.getpid()}-{timestamp}"
         self._ssh_control_path = f"/tmp/{socket_name}"
 
+        # Persistent SFTP uploader (reused across all batches)
+        self._sftp_uploader = None
+        if SFTP_AVAILABLE and self.verbose:
+            try:
+                self._sftp_uploader = SFTPUploader(
+                    host=self.config.host,
+                    user=self.config.user,
+                    port=self.config.port,
+                    verbose=False  # We'll control progress display per-upload
+                )
+                self._sftp_uploader.connect()
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to create persistent SFTP connection: {e}")
+                logger.warning("Will fall back to rsync")
+                self._sftp_uploader = None
+
         # Verify SSH connection
         self._verify_connection()
 
@@ -335,6 +360,14 @@ class SSHRemoteDetector:
 
     def cleanup(self):
         """Clean up SSH control socket and connections."""
+        # Close persistent SFTP uploader if it exists
+        if hasattr(self, '_sftp_uploader') and self._sftp_uploader is not None:
+            try:
+                self._sftp_uploader.close()
+            except Exception:
+                pass  # Ignore cleanup errors
+            self._sftp_uploader = None
+
         # Close SSH control master connection if it exists
         if hasattr(self, '_ssh_control_path') and self._ssh_control_path:
             control_path = Path(self._ssh_control_path)
@@ -758,7 +791,7 @@ class SSHRemoteDetector:
             print("✓ Remote workspace ready")
 
     def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
-        """Upload batch of images via rsync."""
+        """Upload batch of images via SFTP (with progress bar) or rsync (fallback)."""
         import logging
         logger = logging.getLogger(__name__)
         logger.debug(f"[UPLOAD] _upload_batch called with {len(image_paths)} image paths")
@@ -813,26 +846,52 @@ class SSHRemoteDetector:
             cleanup_cmd = f"rm -rf {remote_input} && mkdir -p {remote_input}"
             self._run_ssh_command(cleanup_cmd, check=True)
 
-            # Rsync to remote (quiet - just show summary)
-            cmd = (
-                [
-                    "rsync",
-                    "-az",
-                    "--quiet",  # Always quiet - no per-file output
-                ]
-                + self.config.get_rsync_ssh_args(self._ssh_control_path)
-                + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
-            )
-
-            # Upload with retry logic for transient failures
-            self._run_rsync_with_retry(cmd, operation="upload")
+            # Upload via SFTP with progress bar (parallel, persistent connection)
+            if self._sftp_uploader is not None:
+                # Use persistent SFTP uploader with parallel uploads
+                try:
+                    # Get list of files to upload
+                    files_to_upload = list(temp_path.glob("*"))
+                    uploaded_count = self._sftp_uploader.upload_files(
+                        local_paths=files_to_upload,
+                        remote_dir=remote_input,
+                        desc=f"  Uploading batch {batch_id}",
+                        show_progress=True,
+                        max_workers=20  # Parallel uploads (20 files at once)
+                    )
+                    logger.debug(f"[UPLOAD] SFTP uploaded {uploaded_count}/{len(files_to_upload)} files (parallel)")
+                except Exception as e:
+                    logger.warning(f"SFTP upload failed ({e}), falling back to rsync")
+                    # Fallback to rsync
+                    cmd = (
+                        [
+                            "rsync",
+                            "-a",  # No compression (JPGs already compressed)
+                            "--quiet",
+                        ]
+                        + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                        + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+                    )
+                    self._run_rsync_with_retry(cmd, operation="upload")
+            else:
+                # Use rsync (no SFTP available or non-verbose mode)
+                cmd = (
+                    [
+                        "rsync",
+                        "-a",  # No compression (JPGs already compressed)
+                        "--quiet",
+                    ]
+                    + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                    + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+                )
+                self._run_rsync_with_retry(cmd, operation="upload")
 
             # Verify upload - count files on remote
             count_cmd = f"ls {remote_input} | wc -l"
             result = self._run_ssh_command(count_cmd, check=False)
             if result.returncode == 0:
                 remote_count = int(result.stdout.strip())
-                logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after rsync (expected {len(image_paths)})")
+                logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after upload (expected {len(image_paths)})")
                 if remote_count != len(image_paths):
                     logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
 
