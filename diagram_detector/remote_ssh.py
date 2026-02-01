@@ -1128,7 +1128,8 @@ class SSHRemoteDetector:
         cmd = (
             f"cd {self.config.remote_work_dir} && "
             f"mkdir -p {output_dir} && "  # Ensure output dir exists for log redirection
-            f"echo 'Starting inference batch {batch_id}...' > {log_file} && "  # Test log creation
+            f"echo 'Starting inference batch {batch_id}...' > {log_file} && "  # Overwrite old log
+            f"rm -f {err_file} && "  # Clean old error file to prevent stale errors
             # Set file descriptor limit to prevent exhaustion with many images
             # Must be set here since SSH non-interactive shells don't source ~/.bashrc
             f"ulimit -n 4096 && "
