@@ -328,24 +328,11 @@ class SSHRemoteDetector:
         socket_name = f"dd-{os.getpid()}-{timestamp}"
         self._ssh_control_path = f"/tmp/{socket_name}"
 
-        # Persistent SFTP uploader (lazy initialization - connect on first use)
+        # Persistent SFTP uploader - DISABLED (paramiko SFTP is not thread-safe)
+        # Parallel uploads cause "Server connection dropped" errors
+        # Using rsync instead, which is reliable even if slightly slower
         self._sftp_uploader = None
         self._sftp_connected = False
-        if SFTP_AVAILABLE and self.verbose:
-            try:
-                self._sftp_uploader = SFTPUploader(
-                    host=self.config.host,
-                    user=self.config.user,
-                    port=self.config.port,
-                    verbose=False  # We'll control progress display per-upload
-                )
-                # Don't connect yet - will connect lazily on first upload
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Failed to create SFTP uploader: {e}")
-                logger.warning("Will fall back to rsync")
-                self._sftp_uploader = None
 
         # Verify SSH connection
         self._verify_connection()
