@@ -857,7 +857,7 @@ class SSHRemoteDetector:
                     if start_idx < num_files:
                         file_groups.append(files_to_upload[start_idx:end_idx])
 
-                logger.debug(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel rsync processes")
+                logger.info(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel rsync processes")
 
                 def rsync_file_group(group_idx: int, files: List[Path]) -> tuple:
                     """Upload a group of files via rsync, return (success, error)."""
@@ -874,7 +874,9 @@ class SSHRemoteDetector:
                             cmd = (
                                 [
                                     "rsync",
-                                    "-a",  # No compression
+                                    "-a",  # Archive mode (no compression)
+                                    "--whole-file",  # Skip delta algorithm (files are new)
+                                    "--inplace",  # Write directly, no temp files
                                     "--files-from", files_list_path,
                                 ]
                                 + self.config.get_rsync_ssh_args(self._ssh_control_path)
@@ -905,10 +907,13 @@ class SSHRemoteDetector:
 
                 if len(file_groups) == 1:
                     # Single group - just use regular rsync
+                    logger.info(f"[UPLOAD] Single group, using sequential rsync")
                     cmd = (
                         [
                             "rsync",
                             "-a",
+                            "--whole-file",  # Skip delta algorithm
+                            "--inplace",  # No temp files
                             "--quiet",
                         ]
                         + self.config.get_rsync_ssh_args(self._ssh_control_path)
@@ -950,13 +955,15 @@ class SSHRemoteDetector:
             result = self._run_ssh_command(count_cmd, check=False)
             if result.returncode == 0:
                 remote_count = int(result.stdout.strip())
-                logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after upload (expected {len(image_paths)})")
+                logger.info(f"[UPLOAD] Upload verification: {remote_count} files in {remote_input} (expected {len(image_paths)})")
                 if remote_count != len(image_paths):
                     logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
                     # List what files are actually there
                     ls_result = self._run_ssh_command(f"ls -la {remote_input}", check=False)
                     logger.error(f"[UPLOAD] Remote directory contents:\n{ls_result.stdout}")
                     raise RuntimeError(f"Upload verification failed: expected {len(image_paths)} files, found {remote_count}")
+                else:
+                    logger.info(f"[UPLOAD] ✓ Verification passed: all {remote_count} files present")
             else:
                 logger.error(f"[UPLOAD] Failed to verify upload - ls command failed")
                 logger.error(f"  Return code: {result.returncode}")
@@ -979,7 +986,8 @@ class SSHRemoteDetector:
         logger = logging.getLogger(__name__)
         debug_cmd = f"ls -la {input_dir} | head -20"
         debug_result = self._run_ssh_command(debug_cmd, check=False)
-        logger.debug(f"[INFERENCE] Input directory before inference:\n{debug_result.stdout}")
+        logger.info(f"[INFERENCE] Verifying input directory before inference: {input_dir}")
+        logger.info(f"[INFERENCE] Directory listing (first 20 files):\n{debug_result.stdout}")
         remote_config_file = f"{remote_config_dir}/{self.run_id}.yaml"
 
         # Upload run config to remote (idempotent - ok to upload multiple times)
