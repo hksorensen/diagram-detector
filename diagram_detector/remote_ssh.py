@@ -328,8 +328,9 @@ class SSHRemoteDetector:
         socket_name = f"dd-{os.getpid()}-{timestamp}"
         self._ssh_control_path = f"/tmp/{socket_name}"
 
-        # Persistent SFTP uploader (reused across all batches)
+        # Persistent SFTP uploader (lazy initialization - connect on first use)
         self._sftp_uploader = None
+        self._sftp_connected = False
         if SFTP_AVAILABLE and self.verbose:
             try:
                 self._sftp_uploader = SFTPUploader(
@@ -338,11 +339,11 @@ class SSHRemoteDetector:
                     port=self.config.port,
                     verbose=False  # We'll control progress display per-upload
                 )
-                self._sftp_uploader.connect()
+                # Don't connect yet - will connect lazily on first upload
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.warning(f"Failed to create persistent SFTP connection: {e}")
+                logger.warning(f"Failed to create SFTP uploader: {e}")
                 logger.warning("Will fall back to rsync")
                 self._sftp_uploader = None
 
@@ -850,6 +851,11 @@ class SSHRemoteDetector:
             if self._sftp_uploader is not None:
                 # Use persistent SFTP uploader with parallel uploads
                 try:
+                    # Lazy connection - connect on first use (after workspace setup)
+                    if not self._sftp_connected:
+                        self._sftp_uploader.connect()
+                        self._sftp_connected = True
+
                     # Get list of files to upload
                     files_to_upload = list(temp_path.glob("*"))
                     uploaded_count = self._sftp_uploader.upload_files(
