@@ -376,6 +376,12 @@ class PDFRemoteDetector:
 
                 logger.debug(f"[EXTRACTION] Submitted {len(future_to_pdf)} extraction tasks")
 
+                # Log PDF sizes to identify potential large files early
+                for pdf_path in pdf_batch:
+                    pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+                    if pdf_size_mb > 50:  # Warn about files > 50MB
+                        logger.warning(f"Large PDF file: {pdf_path.name} ({pdf_size_mb:.1f} MB)")
+
                 # Collect results as they complete with progress tracking
                 from tqdm import tqdm
                 completed_count = 0
@@ -387,9 +393,23 @@ class PDFRemoteDetector:
                 for future in as_completed(future_to_pdf):
                     pdf_path = future_to_pdf[future]
                     try:
-                        image_paths = future.result()
+                        # Timeout after 10 minutes per PDF (handles very large PDFs up to ~3000 pages)
+                        # At 0.2 sec/page, 3000 pages = 600 seconds = 10 minutes
+                        image_paths = future.result(timeout=600)
                         pdf_images[pdf_path.name] = image_paths
-                        total_pages += len(image_paths) if image_paths else 0
+                        num_pages = len(image_paths) if image_paths else 0
+                        total_pages += num_pages
+
+                        # Warn if PDF is unusually large
+                        if num_pages > 500:
+                            logger.warning(f"Large PDF: {pdf_path.name} has {num_pages} pages")
+                    except TimeoutError:
+                        logger.error(f"PDF extraction TIMEOUT for {pdf_path.name} (exceeded 10 minutes)")
+                        logger.error(f"  PDF path: {pdf_path}")
+                        logger.error(f"  PDF size: {pdf_path.stat().st_size / 1024 / 1024:.1f} MB")
+                        if self.verbose:
+                            print(f"  ✗ {pdf_path.name}: Extraction timeout (>10 min)")
+                        pdf_images[pdf_path.name] = None
                     except Exception as e:
                         # CRITICAL: Log full exception for debugging
                         import traceback
