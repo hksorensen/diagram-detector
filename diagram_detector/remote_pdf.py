@@ -351,6 +351,10 @@ class PDFRemoteDetector:
         if self.verbose:
             print(f"  Extracting {len(pdf_batch)} PDFs in parallel ({self.max_workers} workers)...")
 
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"[EXTRACTION] Starting extraction of {len(pdf_batch)} PDFs")
+
         pdf_images = {}
 
         if not self.parallel_extract or len(pdf_batch) == 1:
@@ -361,6 +365,7 @@ class PDFRemoteDetector:
                 pdf_images[pdf_path.name] = image_paths
         else:
             # Parallel extraction
+            logger.debug(f"[EXTRACTION] Creating ThreadPoolExecutor with {self.max_workers} workers")
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit all extraction tasks
                 future_to_pdf = {}
@@ -369,18 +374,25 @@ class PDFRemoteDetector:
                     future = executor.submit(self._extract_pdf_pages, pdf_path, pdf_dir)
                     future_to_pdf[future] = pdf_path
 
-                # Collect results as they complete
+                logger.debug(f"[EXTRACTION] Submitted {len(future_to_pdf)} extraction tasks")
+
+                # Collect results as they complete with progress tracking
+                from tqdm import tqdm
+                completed_count = 0
+                total_pages = 0
+
+                if self.verbose:
+                    progress = tqdm(total=len(future_to_pdf), desc="  Extracting", unit="PDF", leave=False)
+
                 for future in as_completed(future_to_pdf):
                     pdf_path = future_to_pdf[future]
                     try:
                         image_paths = future.result()
                         pdf_images[pdf_path.name] = image_paths
+                        total_pages += len(image_paths) if image_paths else 0
                     except Exception as e:
                         # CRITICAL: Log full exception for debugging
-                        import logging
                         import traceback
-                        logger = logging.getLogger(__name__)
-
                         logger.error(f"PDF extraction FAILED for {pdf_path.name}")
                         logger.error(f"  Error: {type(e).__name__}: {e}")
                         logger.error(f"  PDF path: {pdf_path}")
@@ -394,7 +406,25 @@ class PDFRemoteDetector:
                         # This will cause caching to skip this PDF
                         pdf_images[pdf_path.name] = None
 
+                    completed_count += 1
+                    if self.verbose:
+                        progress.update(1)
+
+                if self.verbose:
+                    progress.close()
+
         extraction_time = time.time() - start_time
+
+        # Log extraction summary
+        total_pages_extracted = sum(len(imgs) if imgs else 0 for imgs in pdf_images.values() if imgs is not None)
+        failed_pdfs = sum(1 for imgs in pdf_images.values() if imgs is None)
+        logger.debug(f"[EXTRACTION] Complete: {len(pdf_images)} PDFs, {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)")
+        if failed_pdfs > 0:
+            logger.warning(f"[EXTRACTION] {failed_pdfs}/{len(pdf_images)} PDFs failed extraction")
+
+        if self.verbose:
+            print(f"  ✓ Extraction complete: {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)")
+
         return pdf_images, extraction_time
 
     def _process_pdf_batch(
@@ -604,6 +634,15 @@ class PDFRemoteDetector:
 
         # Query GPU memory after inference
         gpu_mem_used, gpu_mem_free = self.remote_detector.get_gpu_memory()
+
+        # Log batch timing breakdown
+        total_time = extraction_time + inference_time
+        logger.info(f"[BATCH {batch_id}] Timing breakdown:")
+        logger.info(f"  Extraction:  {extraction_time:6.1f}s ({100*extraction_time/total_time:5.1f}%)")
+        logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
+        logger.info(f"  Total:       {total_time:6.1f}s")
+        logger.info(f"  Throughput:  {len(all_images)/total_time:.1f} pages/s")
+        logger.info(f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(len(r) for r in pdf_results.values())} diagrams")
 
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)

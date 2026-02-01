@@ -16,6 +16,7 @@ import time
 import threading
 import sys
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from network_utils import SFTPUploader
@@ -835,8 +836,11 @@ class SSHRemoteDetector:
             self._run_ssh_command(cleanup_cmd, check=True)
 
             # Upload via parallel tar+pipe (much faster than rsync for many small files)
+            upload_start = time.time()
             files_to_upload = list(temp_path.glob("*"))
             num_files = len(files_to_upload)
+
+            logger.debug(f"[UPLOAD] Starting upload of {num_files} files via parallel tar+pipe")
 
             if num_files == 0:
                 logger.warning(f"No files to upload for batch {batch_id}")
@@ -856,9 +860,6 @@ class SSHRemoteDetector:
                 logger.debug(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel streams")
 
                 # Upload each group in parallel using tar+pipe
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                import subprocess
-
                 def upload_file_group(group_idx: int, files: List[Path]) -> tuple:
                     """Upload a group of files via tar+pipe, return (success, error)."""
                     try:
@@ -929,6 +930,11 @@ class SSHRemoteDetector:
                     logger.error(f"{len(upload_errors)}/{len(file_groups)} upload streams failed")
                     raise RuntimeError(f"Parallel tar+pipe upload failed: {upload_errors[0][1]}")
 
+                upload_time = time.time() - upload_start
+                logger.debug(f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
+                if self.verbose:
+                    print(f"  ✓ Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
+
             # Verify upload - count files on remote
             count_cmd = f"ls {remote_input} | wc -l"
             result = self._run_ssh_command(count_cmd, check=False)
@@ -937,9 +943,6 @@ class SSHRemoteDetector:
                 logger.debug(f"[UPLOAD] Batch {batch_id}: {remote_count} files on remote after upload (expected {len(image_paths)})")
                 if remote_count != len(image_paths):
                     logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
-
-        if self.verbose:
-            print(f"  ✓ Upload complete")
 
     def _run_inference_batch(self, batch_id: str, gpu_batch_size: int = 32, num_images: int = 0) -> None:
         """Run inference on batch using run-level config."""
