@@ -386,9 +386,11 @@ class PDFRemoteDetector:
                 from tqdm import tqdm
                 completed_count = 0
                 total_pages = 0
+                extraction_start_time = time.time()
 
                 if self.verbose:
-                    progress = tqdm(total=len(future_to_pdf), desc="  Extracting", unit="PDF", leave=False)
+                    progress = tqdm(total=len(future_to_pdf), desc="  Extracting", unit="PDF", leave=False,
+                                    bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}]')
 
                 for future in as_completed(future_to_pdf):
                     pdf_path = future_to_pdf[future]
@@ -428,6 +430,10 @@ class PDFRemoteDetector:
 
                     completed_count += 1
                     if self.verbose:
+                        # Update progress bar with current page count and speed
+                        elapsed = time.time() - extraction_start_time
+                        pages_per_sec = total_pages / elapsed if elapsed > 0 else 0
+                        progress.set_description(f"  Extracting ({total_pages} pages, {pages_per_sec:.1f} p/s)")
                         progress.update(1)
 
                 if self.verbose:
