@@ -835,29 +835,110 @@ class SSHRemoteDetector:
             cleanup_cmd = f"rm -rf {remote_input} && mkdir -p {remote_input}"
             self._run_ssh_command(cleanup_cmd, check=True)
 
-            # Upload via rsync
+            # Upload via parallel rsync
             upload_start = time.time()
-            num_files = len(list(temp_path.glob("*")))
+            files_to_upload = list(temp_path.glob("*"))
+            num_files = len(files_to_upload)
 
-            logger.debug(f"[UPLOAD] Starting rsync upload of {num_files} files")
+            logger.debug(f"[UPLOAD] Starting parallel rsync upload of {num_files} files")
 
             if num_files == 0:
                 logger.warning(f"No files to upload for batch {batch_id}")
             else:
-                if self.verbose:
-                    print(f"  Uploading {num_files} files...")
+                # Split files into groups for parallel rsync
+                # Use 5 parallel processes (safe for typical SSH MaxSessions limit)
+                num_parallel = min(5, max(1, num_files // 50))  # At least 50 files per process
+                files_per_group = (num_files + num_parallel - 1) // num_parallel
 
-                # Use rsync (reliable and well-tested)
-                cmd = (
-                    [
-                        "rsync",
-                        "-a",  # No compression (JPGs already compressed)
-                        "--quiet",
-                    ]
-                    + self.config.get_rsync_ssh_args(self._ssh_control_path)
-                    + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
-                )
-                self._run_rsync_with_retry(cmd, operation="upload")
+                file_groups = []
+                for i in range(num_parallel):
+                    start_idx = i * files_per_group
+                    end_idx = min((i + 1) * files_per_group, num_files)
+                    if start_idx < num_files:
+                        file_groups.append(files_to_upload[start_idx:end_idx])
+
+                logger.debug(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel rsync processes")
+
+                def rsync_file_group(group_idx: int, files: List[Path]) -> tuple:
+                    """Upload a group of files via rsync, return (success, error)."""
+                    try:
+                        # Create temp file list for rsync --files-from
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+                            for file in files:
+                                f.write(f"{file.name}\n")
+                            files_list_path = f.name
+
+                        try:
+                            # rsync with --files-from reads list of files to transfer
+                            cmd = (
+                                [
+                                    "rsync",
+                                    "-a",  # No compression
+                                    "--files-from", files_list_path,
+                                ]
+                                + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                                + [str(temp_path) + "/", f"{self.config.ssh_target}:{remote_input}"]
+                            )
+
+                            result = subprocess.run(cmd, capture_output=True, timeout=300)
+                            if result.returncode != 0:
+                                return (False, f"rsync rc={result.returncode}, stderr={result.stderr.decode()[:200]}")
+                            return (True, None)
+                        finally:
+                            Path(files_list_path).unlink(missing_ok=True)
+                    except Exception as e:
+                        return (False, str(e))
+
+                # Upload groups in parallel
+                upload_errors = []
+
+                if self.verbose and len(file_groups) > 1:
+                    from tqdm import tqdm
+                    progress = tqdm(
+                        total=len(file_groups),
+                        desc=f"  Uploading {num_files} files",
+                        unit="process",
+                        leave=False,
+                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} processes'
+                    )
+
+                if len(file_groups) == 1:
+                    # Single group - just use regular rsync
+                    cmd = (
+                        [
+                            "rsync",
+                            "-a",
+                            "--quiet",
+                        ]
+                        + self.config.get_rsync_ssh_args(self._ssh_control_path)
+                        + [f"{temp_path}/", f"{self.config.ssh_target}:{remote_input}"]
+                    )
+                    self._run_rsync_with_retry(cmd, operation="upload")
+                else:
+                    # Multiple groups - parallel rsync
+                    with ThreadPoolExecutor(max_workers=len(file_groups)) as executor:
+                        futures = {
+                            executor.submit(rsync_file_group, idx, group): idx
+                            for idx, group in enumerate(file_groups)
+                        }
+
+                        for future in as_completed(futures):
+                            group_idx = futures[future]
+                            success, error = future.result()
+
+                            if not success:
+                                logger.error(f"Rsync group {group_idx} failed: {error}")
+                                upload_errors.append((group_idx, error))
+
+                            if self.verbose and len(file_groups) > 1:
+                                progress.update(1)
+
+                    if self.verbose and len(file_groups) > 1:
+                        progress.close()
+
+                    if upload_errors:
+                        raise RuntimeError(f"Parallel rsync upload failed: {upload_errors[0][1]}")
 
                 upload_time = time.time() - upload_start
                 logger.debug(f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
