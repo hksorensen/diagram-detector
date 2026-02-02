@@ -920,7 +920,7 @@ class SSHRemoteDetector:
                     if start_idx < num_files:
                         file_groups.append(files_to_upload[start_idx:end_idx])
 
-                logger.info(f"[UPLOAD] Uploading {num_files} files in {len(file_groups)} parallel rsync processes")
+                logger.info(f"[UPLOAD] Uploading {num_files} images in {len(file_groups)} parallel rsync processes")
 
                 def rsync_file_group(group_idx: int, files: List[Path]) -> tuple:
                     """Upload a group of files via rsync, return (success, error)."""
