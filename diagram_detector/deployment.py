@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import datetime
 
 from .remote_ssh import RemoteConfig
+from .utils import MODEL_INFO
 
 
 @dataclass
@@ -584,8 +585,17 @@ def deploy_to_remote(
                     model_hash = get_model_hash(model_path)
                     model_hashes[model_path.stem] = model_hash
 
+                    size_mb = model_path.stat().st_size / (1024 * 1024)
                     if verbose:
-                        print(f"  Syncing {model_path.name} (SHA256: {model_hash[:16]}...)")
+                        print(f"  Syncing {model_path.name} ({size_mb:.1f} MB, SHA256: {model_hash[:16]}...)")
+
+                    # Warn if known model is much smaller than expected (e.g. wrong/placeholder file)
+                    expected_mb = MODEL_INFO.get(model_path.stem, {}).get("size_mb")
+                    if expected_mb is not None and size_mb < 0.5 * expected_mb:
+                        print(
+                            f"  ⚠ WARNING: {model_path.name} is {size_mb:.1f} MB but expected ~{expected_mb} MB. "
+                            "Check that the correct tuned model is in ~/.cache/diagram-detector/models/"
+                        )
 
                     scp_model_cmd = [
                         "scp", "-P", str(config.port),

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Model information
 MODEL_INFO = {
     "diagram-detector-v5": {
-        "size_mb": 5.2,
+        "size_mb": 10.2,
         "params": "2.6M",
         "default_batch_cpu": 8,
         "default_batch_gpu": 64,
@@ -21,7 +21,7 @@ MODEL_INFO = {
         "description": "v5 clean dataset model - optimized for diagram counting",
     },
     "v5": {  # Alias for backwards compatibility
-        "size_mb": 5.2,
+        "size_mb": 10.2,
         "params": "2.6M",
         "default_batch_cpu": 8,
         "default_batch_gpu": 64,
