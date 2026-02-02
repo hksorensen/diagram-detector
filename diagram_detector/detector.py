@@ -413,28 +413,38 @@ class DiagramDetector:
             image_paths = [input_path]
 
         import logging
+        import sys
         logger = logging.getLogger(__name__)
         logger.debug(f"[DIAGNOSTIC] detect(): Processing {len(image_paths)} image paths")
+        batch_sz = int(self.batch_size) if isinstance(self.batch_size, int) else min(32, len(image_paths)) or 1
+        # Debug progress to stdout so it appears in inference.log when run remotely
+        num_batches = (len(image_paths) + batch_sz - 1) // batch_sz
+        print(f"[DEBUG] detect(): starting, {len(image_paths)} images, batch_size={self.batch_size}, num_batches={num_batches}", flush=True)
         if self.verbose:
             print(f"\nProcessing {len(image_paths)} image(s)...")
 
         # Run batch inference
         results = []
+        batch_index = 0
 
         # Process in batches
         for i in tqdm(
-            range(0, len(image_paths), self.batch_size),
+            range(0, len(image_paths), batch_sz),
             desc="Detecting",
             disable=not self.verbose,
             unit="batch",
         ):
-            batch_paths = image_paths[i : i + self.batch_size]
+            batch_paths = image_paths[i : i + batch_sz]
+            batch_index += 1
+            print(f"[DEBUG] detect(): batch {batch_index}/{num_batches}, running _detect_batch on {len(batch_paths)} images (indices {i}-{i + len(batch_paths) - 1})", flush=True)
             batch_results = self._detect_batch(
                 batch_paths, store_images=store_images or save_crops or save_visualizations
             )
-            logger.debug(f"[DIAGNOSTIC] detect(): Batch {i//self.batch_size + 1} returned {len(batch_results)} results (expected {len(batch_paths)})")
+            print(f"[DEBUG] detect(): batch {batch_index}/{num_batches} returned {len(batch_results)} results (expected {len(batch_paths)})", flush=True)
+            logger.debug(f"[DIAGNOSTIC] detect(): Batch {batch_index} returned {len(batch_results)} results (expected {len(batch_paths)})")
             results.extend(batch_results)
 
+        print(f"[DEBUG] detect(): complete, total {len(results)} results", flush=True)
         logger.debug(f"[DIAGNOSTIC] detect(): Returning {len(results)} total results")
         return results
 
@@ -560,6 +570,10 @@ class DiagramDetector:
         self, image_paths: List[Path], store_images: bool = False
     ) -> List[DetectionResult]:
         """Run inference on batch of images."""
+        import sys
+        # Debug to stdout so it appears in inference.log when run remotely
+        print(f"[DEBUG] _detect_batch(): entry, {len(image_paths)} images", flush=True)
+
         # Load images if needed
         if store_images:
             images = [load_image(p) for p in image_paths]
@@ -568,7 +582,6 @@ class DiagramDetector:
 
         # Run YOLO inference with error handling
         import warnings
-        import sys
         import io
         import subprocess
 
@@ -594,6 +607,7 @@ class DiagramDetector:
             sys.stderr = stderr_capture
 
             try:
+                print(f"[DEBUG] _detect_batch(): about to model.predict() on {len(image_paths)} images", flush=True)
                 yolo_results = self.model.predict(
                     source=[str(p) for p in image_paths],
                     conf=self.confidence,
@@ -603,6 +617,15 @@ class DiagramDetector:
                     stream=False,
                     imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
                 )
+                print(f"[DEBUG] _detect_batch(): predict() returned {len(yolo_results)} results", flush=True)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        used_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+                        reserved_mb = torch.cuda.memory_reserved() / (1024 ** 2)
+                        print(f"[DEBUG] _detect_batch(): GPU memory allocated={used_mb:.1f} MB reserved={reserved_mb:.1f} MB", flush=True)
+                except Exception:
+                    pass
             except Exception as e:
                 sys.stderr = old_stderr
                 logger.error(f"YOLO predict() raised exception: {e}")
@@ -666,6 +689,7 @@ class DiagramDetector:
         # Free GPU memory after each inference batch so the next sub-batch (or next process)
         # starts with a clean slate; helps when many image sub-batches run in sequence.
         self._cuda_empty_cache_if_available()
+        print(f"[DEBUG] _detect_batch(): gc and empty_cache done, returning {len(results)} results", flush=True)
 
         return results
 
