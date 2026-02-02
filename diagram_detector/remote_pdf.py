@@ -125,13 +125,24 @@ def _copy_inference_logs(
     Copy inference.log and inference.err from downloaded batch results into a persistent dir.
 
     Source: batch_dir / "results" / run_id / <sub_batch_id> / inference.log|.err
+    (fallback: batch_dir / "results" / <sub_batch_id> if run_id path missing)
     Target: preserve_logs_dir / pdf_batch_id / <sub_batch_id> / inference.log|.err
     """
+    import logging
+    _log = logging.getLogger(__name__)
     results_base = batch_dir / "results" / run_id
     if not results_base.exists():
-        return
+        # Fallback: some installs or older code may write under results/ without run_id
+        results_base = batch_dir / "results"
+        if not results_base.exists():
+            _log.warning(
+                "Preserve logs: results_base does not exist (nothing to copy): %s",
+                batch_dir / "results" / run_id,
+            )
+            return
     dest_base = preserve_logs_dir / pdf_batch_id
     dest_base.mkdir(parents=True, exist_ok=True)
+    n_copied = 0
     for sub_dir in results_base.iterdir():
         if not sub_dir.is_dir():
             continue
@@ -141,6 +152,12 @@ def _copy_inference_logs(
             src = sub_dir / name
             if src.exists():
                 shutil.copy2(src, dest_sub / name)
+        n_copied += 1
+    _log.info(
+        "Preserve logs: copied %d sub-batches to %s",
+        n_copied,
+        dest_base.resolve(),
+    )
 
 
 def _log_pdf_status(
