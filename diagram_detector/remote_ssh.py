@@ -954,7 +954,12 @@ class SSHRemoteDetector:
                                 + [str(temp_path) + "/", f"{self.config.ssh_target}:{remote_input}"]
                             )
 
-                            result = subprocess.run(cmd, capture_output=True, timeout=300)
+                            # Adaptive timeout: 5 min base + 10 sec per file (handles slow networks)
+                            # For 250 files: 5min + 42min = 47min timeout
+                            file_count = len([f for f in temp_files if f.name in file_list])
+                            adaptive_timeout = 300 + (file_count * 10)
+
+                            result = subprocess.run(cmd, capture_output=True, timeout=adaptive_timeout)
                             if result.returncode != 0:
                                 return (False, f"rsync rc={result.returncode}, stderr={result.stderr.decode()[:200]}")
                             return (True, None)

@@ -269,6 +269,7 @@ class PDFRemoteDetector:
         config_dir: Optional[Path] = None,
         tensorrt: bool = False,
         upload_workers: Optional[int] = None,
+        max_pdf_size_mb: Optional[float] = None,
     ):
         """
         Initialize PDF remote detector.
@@ -293,6 +294,7 @@ class PDFRemoteDetector:
             config_dir: Directory to store run configs (for git tracking)
             tensorrt: Use TensorRT optimization on remote (NVIDIA GPU only, 2-3x faster)
             upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
+            max_pdf_size_mb: Skip PDFs larger than this (MB). None = no limit. Useful for slow networks.
         """
         # Auto-load config if not provided
         if config is None:
@@ -310,6 +312,7 @@ class PDFRemoteDetector:
         self.verbose = verbose
         self.parallel_extract = parallel_extract
         self.max_workers = max_workers
+        self.max_pdf_size_mb = max_pdf_size_mb
 
         self.tensorrt = tensorrt
 
@@ -426,20 +429,32 @@ class PDFRemoteDetector:
             # Parallel extraction
             logger.debug(f"[EXTRACTION] Creating ThreadPoolExecutor with {self.max_workers} workers")
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all extraction tasks
+                # Submit extraction tasks, skipping PDFs that exceed size limit
                 future_to_pdf = {}
+                skipped_pdfs = []
+
                 for pdf_path in pdf_batch:
+                    pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+
+                    # Check if PDF exceeds size limit
+                    if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
+                        logger.warning(
+                            f"SKIPPING large PDF: {pdf_path.name} ({pdf_size_mb:.1f} MB) "
+                            f"exceeds limit of {self.max_pdf_size_mb} MB"
+                        )
+                        pdf_images[pdf_path.name] = None  # Mark as skipped
+                        skipped_pdfs.append(pdf_path)
+                        continue
+
+                    # Warn about large files (but still process them)
+                    if pdf_size_mb > 50:
+                        logger.warning(f"Large PDF file: {pdf_path.name} ({pdf_size_mb:.1f} MB)")
+
                     pdf_dir = batch_dir / pdf_path.stem
                     future = executor.submit(self._extract_pdf_pages, pdf_path, pdf_dir)
                     future_to_pdf[future] = pdf_path
 
-                logger.debug(f"[EXTRACTION] Submitted {len(future_to_pdf)} extraction tasks")
-
-                # Log PDF sizes to identify potential large files early
-                for pdf_path in pdf_batch:
-                    pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
-                    if pdf_size_mb > 50:  # Warn about files > 50MB
-                        logger.warning(f"Large PDF file: {pdf_path.name} ({pdf_size_mb:.1f} MB)")
+                logger.debug(f"[EXTRACTION] Submitted {len(future_to_pdf)} extraction tasks, skipped {len(skipped_pdfs)} large PDFs")
 
                 # Collect results as they complete with progress tracking
                 from tqdm import tqdm
@@ -543,21 +558,42 @@ class PDFRemoteDetector:
         pdf_page_counts = {}
         for pdf_name, image_paths in pdf_images.items():
             if image_paths is None:
-                # Extraction failed - skip this PDF
-                logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                # Extraction failed or skipped - determine reason
+                pdf_path = next((p for p in pdf_batch if p.name == pdf_name), None)
+                if pdf_path:
+                    pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+                    if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
+                        # Skipped due to size limit
+                        logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                        if manifest_path:
+                            _log_pdf_status(
+                                manifest_path=manifest_path,
+                                pdf_name=pdf_name,
+                                status="extraction_failed",
+                                pages_extracted=0,
+                                pages_detected=0,
+                                num_diagrams=0,
+                                error_type="SizeLimitExceeded",
+                                error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
+                            )
+                    else:
+                        # Extraction failed for other reason
+                        logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                        if manifest_path:
+                            _log_pdf_status(
+                                manifest_path=manifest_path,
+                                pdf_name=pdf_name,
+                                status="extraction_failed",
+                                pages_extracted=0,
+                                pages_detected=0,
+                                num_diagrams=0,
+                                error_type="ExtractionFailure",
+                                error_message="PDF extraction returned None (exception occurred)"
+                            )
+                else:
+                    # Shouldn't happen, but handle gracefully
+                    logger.warning(f"Skipping {pdf_name} due to extraction failure (PDF not found in batch)")
 
-                # Log to manifest
-                if manifest_path:
-                    _log_pdf_status(
-                        manifest_path=manifest_path,
-                        pdf_name=pdf_name,
-                        status="extraction_failed",
-                        pages_extracted=0,
-                        pages_detected=0,
-                        num_diagrams=0,
-                        error_type="ExtractionFailure",
-                        error_message="PDF extraction returned None (exception occurred)"
-                    )
                 continue
 
             if len(image_paths) == 0:
