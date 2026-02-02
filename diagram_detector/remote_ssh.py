@@ -1369,6 +1369,21 @@ class SSHRemoteDetector:
                     if self.verbose:
                         print(f"✓ Batch {batch_id} already processed (resuming)")
                     results = self._parse_results(batch_output_dir)
+                    import logging
+                    _logger = logging.getLogger(__name__)
+                    _logger.info(
+                        "[REMOTE INFERENCE] resume batch_id=%s expected=%d received=%d",
+                        batch_id, len(batch_paths), len(results),
+                    )
+                    if len(results) != len(batch_paths):
+                        _logger.error(
+                            "Resumed batch result count mismatch: batch_id=%s expected=%d received=%d",
+                            batch_id, len(batch_paths), len(results),
+                        )
+                        raise RuntimeError(
+                            f"Resumed batch {batch_id} has {len(results)} results for {len(batch_paths)} images. "
+                            f"Remove {batch_output_dir} and re-run without resume, or fix the batch."
+                        )
                     all_results.extend(results)
                     continue
 
@@ -1387,12 +1402,44 @@ class SSHRemoteDetector:
                 batch_results_dir = self._download_results(batch_id, output_dir)
                 download_time = time.time() - download_start
 
-                # 4. Parse results
+                # 4. Parse results and validate sub-batch result count
                 results = self._parse_results(batch_results_dir)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    "[REMOTE INFERENCE] batch_id=%s expected=%d received=%d",
+                    batch_id, len(batch_paths), len(results),
+                )
                 if self.verbose:
                     print(f"  ✓ Parsed {len(results)} results from batch {batch_id} (expected {len(batch_paths)})")
                     if len(results) != len(batch_paths):
                         print(f"    ⚠ MISMATCH: {len(batch_paths) - len(results)} results missing!")
+
+                # Validate: do not extend when count is wrong; retry once then fail fast
+                if len(results) != len(batch_paths):
+                    logger.error(
+                        "Sub-batch result count mismatch: batch_id=%s expected=%d received=%d (missing=%d)",
+                        batch_id, len(batch_paths), len(results), len(batch_paths) - len(results),
+                    )
+                    # Retry sub-batch once (inference only; images already on remote)
+                    if self.verbose:
+                        print(f"  Retrying inference for batch {batch_id} once...")
+                    self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
+                    batch_results_dir_retry = self._download_results(batch_id, output_dir)
+                    results = self._parse_results(batch_results_dir_retry)
+                    logger.info(
+                        "[REMOTE INFERENCE] retry batch_id=%s expected=%d received=%d",
+                        batch_id, len(batch_paths), len(results),
+                    )
+                    if len(results) != len(batch_paths):
+                        raise RuntimeError(
+                            f"Sub-batch {batch_id} returned {len(results)} results for {len(batch_paths)} images "
+                            f"(after one retry). Failing fast instead of returning partial results. "
+                            f"Check remote inference.err / inference.log for this batch."
+                        )
+                    if self.verbose:
+                        print(f"  ✓ Retry succeeded: {len(results)} results")
+
                 all_results.extend(results)
 
                 # 5. Cleanup (optional)
