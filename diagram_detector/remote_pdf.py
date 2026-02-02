@@ -824,13 +824,24 @@ class PDFRemoteDetector:
                     if self.verbose:
                         print(f"\n--- Batch {batch_idx + 1}/{num_batches} ({len(batch_pdfs)} PDFs) ---")
 
-                    # Process batch
-                    batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free = self._process_pdf_batch(
-                        batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size, manifest_path
-                    )
+                    batch_dir = work_dir / batch_id
+                    try:
+                        # Process batch (detect() may raise on sub-batch mismatch; we still copy logs in finally)
+                        batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free = self._process_pdf_batch(
+                            batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size, manifest_path
+                        )
+                    finally:
+                        # Copy inference logs even when _process_pdf_batch raises (e.g. sub-batch mismatch),
+                        # so we have inference.err/log for the failing sub-batch for debugging
+                        if preserve_logs_dir:
+                            _copy_inference_logs(
+                                batch_dir=batch_dir,
+                                run_id=self.remote_detector.run_id,
+                                preserve_logs_dir=Path(preserve_logs_dir),
+                                pdf_batch_id=batch_id,
+                            )
 
                     # Check for inference error logs (before temp dir cleanup)
-                    batch_dir = work_dir / batch_id
                     err_files = list(batch_dir.glob("**/inference.err"))
                     for err_file in err_files:
                         if err_file.stat().st_size > 0:
@@ -841,15 +852,6 @@ class PDFRemoteDetector:
                                 for line in f:
                                     logger.error(f"  {line.rstrip()}")
                             logger.error(f"=" * 70)
-
-                    # Copy inference logs to persistent dir for debugging (before temp cleanup)
-                    if preserve_logs_dir:
-                        _copy_inference_logs(
-                            batch_dir=batch_dir,
-                            run_id=self.remote_detector.run_id,
-                            preserve_logs_dir=Path(preserve_logs_dir),
-                            pdf_batch_id=batch_id,
-                        )
 
                     # Accumulate timing
                     total_extraction_time += batch_extraction_time
