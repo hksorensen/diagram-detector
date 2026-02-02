@@ -956,8 +956,7 @@ class SSHRemoteDetector:
 
                             # Adaptive timeout: 5 min base + 10 sec per file (handles slow networks)
                             # For 250 files: 5min + 42min = 47min timeout
-                            file_count = len([f for f in temp_files if f.name in file_list])
-                            adaptive_timeout = 300 + (file_count * 10)
+                            adaptive_timeout = 300 + (len(file_list) * 10)
 
                             result = subprocess.run(cmd, capture_output=True, timeout=adaptive_timeout)
                             if result.returncode != 0:
