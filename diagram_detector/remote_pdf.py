@@ -130,6 +130,17 @@ def _copy_inference_logs(
     """
     import logging
     _log = logging.getLogger(__name__)
+
+    # Check if results directory exists at all (may not if all PDFs failed extraction)
+    results_dir = batch_dir / "results"
+    if not results_dir.exists():
+        _log.debug(
+            "Preserve logs: batch_dir/results does not exist (no inference was run for %s). "
+            "This is normal if all PDFs in the batch failed extraction.",
+            pdf_batch_id
+        )
+        return
+
     results_base = batch_dir / "results" / run_id
     if not results_base.exists():
         # Fallback: some installs or older code may write under results/ without run_id
@@ -257,6 +268,7 @@ class PDFRemoteDetector:
         run_id: Optional[str] = None,
         config_dir: Optional[Path] = None,
         tensorrt: bool = False,
+        upload_workers: Optional[int] = None,
     ):
         """
         Initialize PDF remote detector.
@@ -280,6 +292,7 @@ class PDFRemoteDetector:
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Directory to store run configs (for git tracking)
             tensorrt: Use TensorRT optimization on remote (NVIDIA GPU only, 2-3x faster)
+            upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
         """
         # Auto-load config if not provided
         if config is None:
@@ -313,6 +326,7 @@ class PDFRemoteDetector:
             run_id=run_id,
             config_dir=config_dir,
             tensorrt=tensorrt,
+            upload_workers=upload_workers,
         )
 
         # Initialize cache with proper parameter tracking

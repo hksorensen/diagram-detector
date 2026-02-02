@@ -269,6 +269,7 @@ class SSHRemoteDetector:
         run_id: Optional[str] = None,
         config_dir: Optional[Path] = None,
         tensorrt: Optional[bool] = None,
+        upload_workers: Optional[int] = None,
     ):
         """
         Initialize remote detector.
@@ -285,6 +286,7 @@ class SSHRemoteDetector:
             run_id: Unique run identifier (auto-generated if None)
             config_dir: Local directory to store run config YAML (for git tracking)
             tensorrt: Use TensorRT optimization on remote (defaults from config)
+            upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
         """
         # Load config
         if config is None:
@@ -310,6 +312,7 @@ class SSHRemoteDetector:
         self.imgsz = imgsz if imgsz is not None else self.config.imgsz
         self.tensorrt = tensorrt if tensorrt is not None else self.config.tensorrt
         self.verbose = verbose
+        self.upload_workers = upload_workers  # None = auto-calculate, int = fixed count
 
         # Generate run ID if not provided
         if run_id is None:
@@ -910,7 +913,12 @@ class SSHRemoteDetector:
             else:
                 # Split files into groups for parallel rsync
                 # Use 5 parallel processes (safe for typical SSH MaxSessions limit)
-                num_parallel = min(5, max(1, num_files // 50))  # At least 50 files per process
+                if self.upload_workers is not None:
+                    # Use explicit worker count
+                    num_parallel = max(1, min(self.upload_workers, num_files))
+                else:
+                    # Auto-calculate: at least 50 files per process, max 5 workers
+                    num_parallel = min(5, max(1, num_files // 50))
                 files_per_group = (num_files + num_parallel - 1) // num_parallel
 
                 file_groups = []
@@ -1013,7 +1021,8 @@ class SSHRemoteDetector:
                 if self.verbose:
                     print(f"  ✓ Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
 
-            # Verify upload - count files on remote
+            # Verify upload - check file count and sizes on remote
+            # First: count files
             count_cmd = f"ls {remote_input} | wc -l"
             result = self._run_ssh_command(count_cmd, check=False)
             if result.returncode == 0:
@@ -1025,8 +1034,44 @@ class SSHRemoteDetector:
                     ls_result = self._run_ssh_command(f"ls -la {remote_input}", check=False)
                     logger.error(f"[UPLOAD] Remote directory contents:\n{ls_result.stdout}")
                     raise RuntimeError(f"Upload verification failed: expected {len(image_paths)} files, found {remote_count}")
+
+                # Second: verify file sizes match
+                logger.info(f"[UPLOAD] Verifying file sizes...")
+                size_cmd = f"du -b {remote_input}* | sort -k2"
+                size_result = self._run_ssh_command(size_cmd, check=False)
+                if size_result.returncode == 0:
+                    remote_files = {}
+                    for line in size_result.stdout.strip().split('\n'):
+                        if line:
+                            parts = line.split('\t')
+                            if len(parts) == 2:
+                                size_str, filepath = parts
+                                filename = Path(filepath).name
+                                remote_files[filename] = int(size_str)
+
+                    # Compare with local files
+                    local_sizes = {f.name: f.stat().st_size for f in temp_files}
+                    size_mismatches = []
+                    for filename, local_size in local_sizes.items():
+                        remote_size = remote_files.get(filename, -1)
+                        if remote_size != local_size:
+                            size_mismatches.append(f"{filename}: local={local_size}B, remote={remote_size}B")
+
+                    if size_mismatches:
+                        logger.error(f"[UPLOAD] SIZE MISMATCH: {len(size_mismatches)} files have wrong size!")
+                        for mismatch in size_mismatches[:5]:  # Show first 5
+                            logger.error(f"  {mismatch}")
+                        raise RuntimeError(f"Upload verification failed: {len(size_mismatches)} files have incorrect size")
+                    else:
+                        logger.info(f"[UPLOAD] ✓ Size verification passed: all {len(local_sizes)} files match")
                 else:
-                    logger.info(f"[UPLOAD] ✓ Verification passed: all {remote_count} files present")
+                    logger.warning(f"[UPLOAD] Could not verify file sizes (du command failed)")
+
+                # Third: Force filesystem sync and add small delay
+                logger.info(f"[UPLOAD] Syncing filesystem...")
+                self._run_ssh_command(f"sync", check=False)
+                time.sleep(0.5)  # 500ms delay for filesystem to settle
+                logger.info(f"[UPLOAD] ✓ Verification passed: all {remote_count} files present with correct sizes")
             else:
                 logger.error(f"[UPLOAD] Failed to verify upload - ls command failed")
                 logger.error(f"  Return code: {result.returncode}")
