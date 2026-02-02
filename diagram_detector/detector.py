@@ -214,8 +214,22 @@ class DiagramDetector:
         else:
             self.model = YOLO(str(model_path))
 
+        # Reclaim GPU memory that may be held from a previous process (each image sub-batch
+        # runs in a new process; the driver can retain memory across process exits).
+        self._cuda_empty_cache_if_available()
+
         if self.verbose:
             print("✓ Model loaded")
+
+    def _cuda_empty_cache_if_available(self) -> None:
+        """Call torch.cuda.empty_cache() and gc.collect() if CUDA is available. No-op otherwise."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+        except Exception:
+            pass
 
     @classmethod
     def from_config(cls, config_path: Union[str, Path]) -> "DiagramDetector":
@@ -648,6 +662,10 @@ class DiagramDetector:
         # Call gc.collect() every 256 images (8 batches of 32)
         if self._images_processed % 256 < len(image_paths):
             gc.collect()
+
+        # Free GPU memory after each inference batch so the next sub-batch (or next process)
+        # starts with a clean slate; helps when many image sub-batches run in sequence.
+        self._cuda_empty_cache_if_available()
 
         return results
 

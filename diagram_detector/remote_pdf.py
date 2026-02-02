@@ -115,6 +115,34 @@ def _append_timing_to_csv(
         writer.writerow(row)
 
 
+def _copy_inference_logs(
+    batch_dir: Path,
+    run_id: str,
+    preserve_logs_dir: Path,
+    pdf_batch_id: str,
+) -> None:
+    """
+    Copy inference.log and inference.err from downloaded batch results into a persistent dir.
+
+    Source: batch_dir / "results" / run_id / <sub_batch_id> / inference.log|.err
+    Target: preserve_logs_dir / pdf_batch_id / <sub_batch_id> / inference.log|.err
+    """
+    results_base = batch_dir / "results" / run_id
+    if not results_base.exists():
+        return
+    dest_base = preserve_logs_dir / pdf_batch_id
+    dest_base.mkdir(parents=True, exist_ok=True)
+    for sub_dir in results_base.iterdir():
+        if not sub_dir.is_dir():
+            continue
+        dest_sub = dest_base / sub_dir.name
+        dest_sub.mkdir(parents=True, exist_ok=True)
+        for name in ("inference.log", "inference.err"):
+            src = sub_dir / name
+            if src.exists():
+                shutil.copy2(src, dest_sub / name)
+
+
 def _log_pdf_status(
     manifest_path: Path,
     pdf_name: str,
@@ -686,6 +714,7 @@ class PDFRemoteDetector:
         debug_max_batches: Optional[int] = None,
         gpu_batch_size: int = 32,
         manifest_path: Optional[Path] = None,
+        preserve_logs_dir: Optional[Path] = None,
     ) -> Dict[str, List[DetectionResult]]:
         """
         Process PDFs with remote inference and local caching.
@@ -697,6 +726,9 @@ class PDFRemoteDetector:
             force_reprocess: Force reprocessing even if cached
             auto_git_commit: Automatically git commit the run config
             timing_log: Path to CSV file for logging timing data (None = no logging)
+            preserve_logs_dir: If set, copy inference.log and inference.err from each
+                image sub-batch into this dir (pdf_batch_id / sub_batch_id / inference.*)
+                for debugging. Created if missing.
 
         Returns:
             Dict mapping PDF filename to list of DetectionResult (one per page)
@@ -809,6 +841,15 @@ class PDFRemoteDetector:
                                 for line in f:
                                     logger.error(f"  {line.rstrip()}")
                             logger.error(f"=" * 70)
+
+                    # Copy inference logs to persistent dir for debugging (before temp cleanup)
+                    if preserve_logs_dir:
+                        _copy_inference_logs(
+                            batch_dir=batch_dir,
+                            run_id=self.remote_detector.run_id,
+                            preserve_logs_dir=Path(preserve_logs_dir),
+                            pdf_batch_id=batch_id,
+                        )
 
                     # Accumulate timing
                     total_extraction_time += batch_extraction_time
