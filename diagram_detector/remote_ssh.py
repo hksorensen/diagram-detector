@@ -1414,18 +1414,26 @@ class SSHRemoteDetector:
         self._server_proc.stdin.write(cmd + "\n")
         self._server_proc.stdin.flush()
 
-        # Block until response
-        response_line = self._server_proc.stdout.readline().strip()
-        if not response_line:
-            # EOF — server died
-            self._server_proc.wait()
-            self._server_proc = None
-            raise RuntimeError(
-                f"Persistent server died during inference (batch {batch_id}). "
-                f"Check remote stderr / inference.err for details."
-            )
-
-        response = json.loads(response_line)
+        # Block until we get a valid JSON response line.  Any non-JSON lines
+        # (e.g. stray C-extension output that leaked past fd redirect) are
+        # logged and skipped.
+        while True:
+            response_line = self._server_proc.stdout.readline().strip()
+            if not response_line:
+                # EOF — server died
+                self._server_proc.wait()
+                self._server_proc = None
+                raise RuntimeError(
+                    f"Persistent server died during inference (batch {batch_id}). "
+                    f"Check remote stderr / inference.err for details."
+                )
+            try:
+                response = json.loads(response_line)
+                break  # valid JSON — proceed
+            except json.JSONDecodeError:
+                # Non-JSON line leaked through — skip and keep reading
+                if self.verbose:
+                    print(f"  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
         if response["status"] == "ERROR":
             raise RuntimeError(
                 f"Persistent server error on batch {batch_id}: {response['error']}"

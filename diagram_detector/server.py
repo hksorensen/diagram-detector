@@ -41,6 +41,7 @@ Invoked by ``SSHRemoteDetector`` over SSH::
     python -m diagram_detector.server --model v5 --confidence 0.1 --iou 0.3 ...
 """
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -60,12 +61,19 @@ def main():
     args = parser.parse_args()
 
     # ---------------------------------------------------------------------------
-    # All detector output (verbose prints, [DEBUG] lines) must go to stderr so
-    # stdout stays clean for the JSON protocol.  We restore stdout only when we
-    # need to write a protocol message.
+    # fd-level stdout silence.  ``sys.stdout = sys.stderr`` only catches
+    # Python-level print().  YOLO / ultralytics C extensions write directly to
+    # fd 1, bypassing sys.stdout.  We silence fd 1 permanently by pointing it
+    # at fd 2 (stderr), and keep a dup of the original fd 1 for protocol
+    # messages only.
     # ---------------------------------------------------------------------------
-    _orig_stdout = sys.stdout
-    sys.stdout = sys.stderr  # detector loading prints → stderr
+    _proto_fd = os.dup(1)          # save the real stdout fd
+    os.dup2(2, 1)                  # fd 1 → stderr for the lifetime of the server
+    # sys.stdout now also writes to stderr — safe for any detector prints
+
+    def _send(msg: str) -> None:
+        """Write one line to the protocol fd (original stdout)."""
+        os.write(_proto_fd, (msg + "\n").encode())
 
     from .detector import DiagramDetector
 
@@ -77,13 +85,12 @@ def main():
         batch_size=args.batch_size,
         imgsz=args.imgsz,
         tensorrt=args.tensorrt,
-        verbose=True,   # goes to stderr now
+        verbose=True,   # all output goes to stderr via fd 1
         cache=False,    # caller manages caching; server is stateless between batches
     )
 
     # Signal ready — caller blocks on this line
-    sys.stdout = _orig_stdout
-    print("READY", flush=True)
+    _send("READY")
 
     # -------------------------------------------------------------------------
     # Command loop — one JSON object per line from stdin
@@ -96,13 +103,13 @@ def main():
         try:
             cmd = json.loads(line)
         except json.JSONDecodeError:
-            print(json.dumps({"status": "ERROR", "error": f"Invalid JSON: {line}"}), flush=True)
+            _send(json.dumps({"status": "ERROR", "error": f"Invalid JSON: {line}"}))
             continue
 
         cmd_type = cmd.get("type", "")
 
         if cmd_type == "shutdown":
-            print(json.dumps({"status": "SHUTDOWN"}), flush=True)
+            _send(json.dumps({"status": "SHUTDOWN"}))
             break
 
         if cmd_type == "infer":
@@ -111,33 +118,28 @@ def main():
             output_dir.mkdir(parents=True, exist_ok=True)
 
             try:
-                # Redirect stdout during detection so [DEBUG] prints don't
-                # corrupt the protocol stream.
-                sys.stdout = sys.stderr
                 results = detector.detect(input_dir, store_images=False)
-                sys.stdout = _orig_stdout
 
                 # Save results in the same JSON format cli.py uses
                 detector.save_results(results, output_dir, format="json")
 
-                print(json.dumps({
+                _send(json.dumps({
                     "status": "DONE",
                     "output": str(output_dir),
                     "num_results": len(results),
-                }), flush=True)
+                }))
 
             except Exception as e:
-                sys.stdout = _orig_stdout
                 import traceback
                 traceback.print_exc(file=sys.stderr)
-                print(json.dumps({
+                _send(json.dumps({
                     "status": "ERROR",
                     "error": str(e),
-                }), flush=True)
+                }))
                 # Server stays alive — next batch can still be attempted
 
         else:
-            print(json.dumps({"status": "ERROR", "error": f"Unknown command type: {cmd_type}"}), flush=True)
+            _send(json.dumps({"status": "ERROR", "error": f"Unknown command type: {cmd_type}"}))
 
 
 if __name__ == "__main__":
