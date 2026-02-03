@@ -270,6 +270,7 @@ class SSHRemoteDetector:
         config_dir: Optional[Path] = None,
         tensorrt: Optional[bool] = None,
         upload_workers: Optional[int] = None,
+        use_persistent_server: bool = False,
     ):
         """
         Initialize remote detector.
@@ -287,6 +288,9 @@ class SSHRemoteDetector:
             config_dir: Local directory to store run config YAML (for git tracking)
             tensorrt: Use TensorRT optimization on remote (defaults from config)
             upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
+            use_persistent_server: Keep model resident in GPU memory across sub-batches
+                via a long-lived SSH process running diagram_detector.server.
+                Eliminates ~3-5 s model-reload overhead per sub-batch.
         """
         # Load config
         if config is None:
@@ -313,6 +317,8 @@ class SSHRemoteDetector:
         self.tensorrt = tensorrt if tensorrt is not None else self.config.tensorrt
         self.verbose = verbose
         self.upload_workers = upload_workers  # None = auto-calculate, int = fixed count
+        self.use_persistent_server = use_persistent_server
+        self._server_proc = None  # subprocess.Popen when persistent server is running
 
         # Generate run ID if not provided
         if run_id is None:
@@ -356,6 +362,9 @@ class SSHRemoteDetector:
 
     def cleanup(self):
         """Clean up SSH control socket and connections."""
+        # Stop persistent inference server if running
+        self._stop_persistent_server()
+
         # Close persistent SFTP uploader if it exists
         if hasattr(self, '_sftp_uploader') and self._sftp_uploader is not None:
             try:
@@ -1324,6 +1333,134 @@ class SSHRemoteDetector:
 
         return results
 
+    # -----------------------------------------------------------------------
+    # Persistent inference server — keeps the model resident in GPU memory
+    # across all sub-batches via a single long-lived SSH process.
+    # -----------------------------------------------------------------------
+
+    def _start_persistent_server(self) -> None:
+        """Start the persistent inference server over SSH.
+
+        Opens a subprocess with an SSH connection to the remote.  The remote
+        side runs ``python -m diagram_detector.server``.  We block until we
+        read ``READY`` on stdout (i.e. the model is loaded).
+        """
+        if self._server_proc is not None:
+            return  # already running
+
+        tensorrt_flag = "--tensorrt " if self.tensorrt else ""
+        cmd = (
+            ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target,
+            f"cd {self.config.remote_work_dir} && "
+            f"ulimit -n 4096 && "
+            f"{self.config.python_path} -u -m diagram_detector.server "
+            f"--model {self.model} "
+            f"--confidence {self.confidence} "
+            f"--iou {self.iou} "
+            f"--imgsz {self.imgsz} "
+            f"--device auto "
+            f"{tensorrt_flag}"
+            f"--batch-size {self.gpu_batch_size}"]
+        )
+
+        if self.verbose:
+            print("  Starting persistent inference server on remote...")
+
+        # stderr → DEVNULL: the server redirects all detector output (YOLO
+        # progress bars, [DEBUG] lines) to stderr.  Capturing it via PIPE would
+        # fill the kernel pipe buffer and deadlock while we block on stdout.
+        # Diagnostics after a crash are available via remote inference.log/err.
+        self._server_proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+
+        # Block until READY (model loaded on remote GPU)
+        line = self._server_proc.stdout.readline().strip()
+        if line != "READY":
+            self._server_proc.kill()
+            self._server_proc = None
+            raise RuntimeError(
+                f"Persistent server did not send READY (got: {line!r}). "
+                f"Check remote stderr / inference.err for details."
+            )
+
+        if self.verbose:
+            print("  ✓ Persistent server ready (model loaded)")
+
+    def _run_inference_persistent(self, batch_id: str, num_images: int) -> None:
+        """Send an infer command to the persistent server and wait for completion.
+
+        Args:
+            batch_id: Batch identifier (used to locate input/output dirs on remote)
+            num_images: Number of images (for logging only)
+
+        Raises:
+            RuntimeError: If the server reports an error or the process died.
+        """
+        if self._server_proc is None or self._server_proc.poll() is not None:
+            raise RuntimeError(
+                "Persistent server process is not running. "
+                "Call _start_persistent_server() first."
+            )
+
+        input_dir  = f"{self.config.remote_work_dir}/input/{batch_id}"
+        output_dir = f"{self.config.remote_work_dir}/results/{self.run_id}/{batch_id}"
+
+        cmd = json.dumps({"type": "infer", "input": input_dir, "output": output_dir})
+        self._server_proc.stdin.write(cmd + "\n")
+        self._server_proc.stdin.flush()
+
+        # Block until response
+        response_line = self._server_proc.stdout.readline().strip()
+        if not response_line:
+            # EOF — server died
+            self._server_proc.wait()
+            self._server_proc = None
+            raise RuntimeError(
+                f"Persistent server died during inference (batch {batch_id}). "
+                f"Check remote stderr / inference.err for details."
+            )
+
+        response = json.loads(response_line)
+        if response["status"] == "ERROR":
+            raise RuntimeError(
+                f"Persistent server error on batch {batch_id}: {response['error']}"
+            )
+
+        if response["status"] != "DONE":
+            raise RuntimeError(
+                f"Unexpected response from persistent server: {response}"
+            )
+
+        if self.verbose:
+            print(f"  ✓ Batch {batch_id} processed (persistent server, {num_images} images)")
+
+    def _stop_persistent_server(self) -> None:
+        """Send shutdown command and wait for the server process to exit."""
+        if self._server_proc is None:
+            return
+
+        try:
+            if self._server_proc.poll() is None:
+                self._server_proc.stdin.write(json.dumps({"type": "shutdown"}) + "\n")
+                self._server_proc.stdin.flush()
+                self._server_proc.wait(timeout=5)
+        except Exception:
+            # Best-effort — kill if it won't cooperate
+            try:
+                self._server_proc.kill()
+                self._server_proc.wait(timeout=2)
+            except Exception:
+                pass
+
+        self._server_proc = None
+        if self.verbose:
+            print("  ✓ Persistent server stopped")
+
     def detect(
         self,
         input_path: Union[str, Path, List[Path]],
@@ -1397,7 +1534,15 @@ class SSHRemoteDetector:
         num_batches = (len(image_paths) + self.batch_size - 1) // self.batch_size
 
         if self.verbose:
-            print(f"Processing {len(image_paths):,} images in {num_batches} batch(es)...\n")
+            print(f"Processing {len(image_paths):,} images in {num_batches} batch(es)...")
+            if self.use_persistent_server:
+                print(f"  Mode: persistent server (model loads once)\n")
+            else:
+                print(f"  Mode: per-batch spawn (model reloads each batch)\n")
+
+        # Start persistent inference server (if requested) — model loads here
+        if self.use_persistent_server:
+            self._start_persistent_server()
 
         # Process batches
         all_results = []
@@ -1443,7 +1588,10 @@ class SSHRemoteDetector:
 
                 # 2. Run inference
                 inference_start = time.time()
-                self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
+                if self.use_persistent_server:
+                    self._run_inference_persistent(batch_id, num_images=len(batch_paths))
+                else:
+                    self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
                 inference_time = time.time() - inference_start
 
                 # 3. Download results
@@ -1473,7 +1621,10 @@ class SSHRemoteDetector:
                     # Retry sub-batch once (inference only; images already on remote)
                     if self.verbose:
                         print(f"  Retrying inference for batch {batch_id} once...")
-                    self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
+                    if self.use_persistent_server:
+                        self._run_inference_persistent(batch_id, num_images=len(batch_paths))
+                    else:
+                        self._run_inference_batch(batch_id, gpu_batch_size, num_images=len(batch_paths))
                     batch_results_dir_retry = self._download_results(batch_id, output_dir)
                     results = self._parse_results(batch_results_dir_retry)
                     logger.info(
@@ -1526,6 +1677,10 @@ class SSHRemoteDetector:
             print(f"Total diagrams: {total_diagrams:,}")
             print(f"Results saved: {output_dir}")
             print(f"{'='*60}\n")
+
+        # Stop persistent server (normal exit path; cleanup() handles crash path)
+        if self.use_persistent_server:
+            self._stop_persistent_server()
 
         return all_results
 

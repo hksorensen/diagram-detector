@@ -270,6 +270,7 @@ class PDFRemoteDetector:
         tensorrt: bool = False,
         upload_workers: Optional[int] = None,
         max_pdf_size_mb: Optional[float] = None,
+        use_persistent_server: bool = False,
     ):
         """
         Initialize PDF remote detector.
@@ -295,6 +296,7 @@ class PDFRemoteDetector:
             tensorrt: Use TensorRT optimization on remote (NVIDIA GPU only, 2-3x faster)
             upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
             max_pdf_size_mb: Skip PDFs larger than this (MB). None = no limit. Useful for slow networks.
+            use_persistent_server: Keep model resident in GPU memory across sub-batches (~3-5s reload saved per batch)
         """
         # Auto-load config if not provided
         if config is None:
@@ -330,6 +332,7 @@ class PDFRemoteDetector:
             config_dir=config_dir,
             tensorrt=tensorrt,
             upload_workers=upload_workers,
+            use_persistent_server=use_persistent_server,
         )
 
         # Initialize cache with proper parameter tracking
