@@ -65,6 +65,9 @@ onnx = [
 gpu = [
     "onnxruntime-gpu>=1.15.0",
 ]
+tensorrt = [
+    "tensorrt",
+]
 
 [project.urls]
 Homepage = "https://github.com/hksorensen/diagram-detector"

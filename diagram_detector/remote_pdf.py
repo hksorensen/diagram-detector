@@ -540,7 +540,7 @@ class PDFRemoteDetector:
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
         auto_git_commit: bool = False, gpu_batch_size: int = 32,
         manifest_path: Optional[Path] = None
-    ) -> tuple[Dict[str, List[DetectionResult]], float, float, int, int]:
+    ) -> tuple[Dict[str, List[DetectionResult]], float, float, int, int, Dict[str, str]]:
         """
         Process batch of PDFs.
 
@@ -551,13 +551,17 @@ class PDFRemoteDetector:
             auto_git_commit: Automatically git commit the run config
 
         Returns:
-            Tuple of (results dict, extraction_time, inference_time, gpu_mem_used_mb, gpu_mem_free_mb)
+            Tuple of (results dict, extraction_time, inference_time, gpu_mem_used_mb, gpu_mem_free_mb,
+                      batch_failed dict mapping pdf_name to failure status)
         """
         import logging
         logger = logging.getLogger(__name__)
 
         batch_dir = work_dir / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Track failures: {pdf_name: status} for PDFs that did not produce results
+        batch_failed: Dict[str, str] = {}
 
         # Extract all PDFs in batch (parallel if enabled)
         pdf_images, extraction_time = self._extract_pdfs_parallel(pdf_batch, batch_dir)
@@ -574,6 +578,7 @@ class PDFRemoteDetector:
                     if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
                         # Skipped due to size limit
                         logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                        batch_failed[pdf_name] = "extraction_failed"
                         if manifest_path:
                             _log_pdf_status(
                                 manifest_path=manifest_path,
@@ -588,6 +593,7 @@ class PDFRemoteDetector:
                     else:
                         # Extraction failed for other reason
                         logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                        batch_failed[pdf_name] = "extraction_failed"
                         if manifest_path:
                             _log_pdf_status(
                                 manifest_path=manifest_path,
@@ -613,7 +619,7 @@ class PDFRemoteDetector:
                 logger.error(f"  This suggests all pages failed to render (very unusual)")
                 logger.error(f"  The PDF should have been caught earlier if it had 0 pages")
 
-                # Log to manifest
+                batch_failed[pdf_name] = "extraction_failed"
                 if manifest_path:
                     _log_pdf_status(
                         manifest_path=manifest_path,
@@ -704,7 +710,7 @@ class PDFRemoteDetector:
                 logger.error(f"")
                 logger.error(f"  This PDF will be reprocessed on next run")
 
-                # Log to manifest
+                batch_failed[pdf_path.name] = "inference_failed"
                 if manifest_path:
                     _log_pdf_status(
                         manifest_path=manifest_path,
@@ -726,6 +732,7 @@ class PDFRemoteDetector:
                 logger.warning(f"  Some pages failed inference")
 
                 # Log partial result as inference_failed
+                batch_failed[pdf_path.name] = "inference_failed"
                 total_diagrams = sum(r.count for r in pdf_result_list)
                 if manifest_path:
                     _log_pdf_status(
@@ -777,7 +784,7 @@ class PDFRemoteDetector:
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
 
-        return pdf_results, extraction_time, inference_time, gpu_mem_used, gpu_mem_free
+        return pdf_results, extraction_time, inference_time, gpu_mem_used, gpu_mem_free, batch_failed
 
     def detect_pdfs(
         self,
@@ -876,6 +883,9 @@ class PDFRemoteDetector:
         # Process in batches (skip if all cached)
         all_results = cached_results.copy()
 
+        # Accumulators for failure summary across all batches
+        all_failed_pdfs: Dict[str, str] = {}  # pdf_name -> status
+
         if not to_process:
             if self.verbose:
                 print("✓ All PDFs cached, no processing needed!")
@@ -903,9 +913,10 @@ class PDFRemoteDetector:
                     batch_dir = work_dir / batch_id
                     try:
                         # Process batch (detect() may raise on sub-batch mismatch; we still copy logs in finally)
-                        batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free = self._process_pdf_batch(
+                        batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free, batch_failed = self._process_pdf_batch(
                             batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size, manifest_path
                         )
+                        all_failed_pdfs.update(batch_failed)
                     finally:
                         # Copy inference logs even when _process_pdf_batch raises (e.g. sub-batch mismatch),
                         # so we have inference.err/log for the failing sub-batch for debugging
@@ -984,6 +995,18 @@ class PDFRemoteDetector:
                         print(f"✓ Batch complete: {batch_detections} diagrams found")
                         print(f"  Pages: {batch_pages} total, {pages_with_diagrams} with diagrams ({pages_pct:.1f}%)")
                         print(f"  Average: {avg_diagrams_per_page:.2f} diagrams/page")
+
+                        # Show failure counts if any PDFs failed in this batch
+                        if batch_failed:
+                            n_extraction = sum(1 for s in batch_failed.values() if s == "extraction_failed")
+                            n_inference  = sum(1 for s in batch_failed.values() if s == "inference_failed")
+                            if n_extraction:
+                                print(f"  ⚠ Extraction failed: {n_extraction} PDF(s)")
+                            if n_inference:
+                                print(f"  ⚠ Inference failed:  {n_inference} PDF(s)")
+                            failed_names = list(batch_failed.keys())
+                            print(f"  Failed: {', '.join(failed_names[:10])}" +
+                                  (f" … +{len(failed_names)-10} more" if len(failed_names) > 10 else ""))
 
                         # Estimate remaining time
                         pdfs_processed = batch_end
@@ -1109,7 +1132,33 @@ class PDFRemoteDetector:
                 num_pdfs = cache_stats["num_pdfs"]
                 size_mb = cache_stats["size_mb"]
                 print(f"Cache: {num_pdfs} PDFs ({size_mb:.1f} MB)")
+
+            # Failure breakdown (only shown when there were failures)
+            if all_failed_pdfs:
+                total_processed = len(all_results) + len(all_failed_pdfs)
+                n_extraction = sum(1 for s in all_failed_pdfs.values() if s == "extraction_failed")
+                n_inference  = sum(1 for s in all_failed_pdfs.values() if s == "inference_failed")
+                print(f"\nFailure summary:")
+                print(f"  Successful:        {len(all_results):,} ({len(all_results)/total_processed*100:.1f}%)")
+                if n_extraction:
+                    print(f"  Extraction failed: {n_extraction:,} ({n_extraction/total_processed*100:.1f}%)")
+                if n_inference:
+                    print(f"  Inference failed:  {n_inference:,} ({n_inference/total_processed*100:.1f}%)")
+
             print(f"{'='*60}\n")
+
+        # Write detection_failures.txt when there were failures and manifest tracking is active
+        if all_failed_pdfs and manifest_path:
+            failures_path = Path(manifest_path).parent / "detection_failures.txt"
+            failures_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(failures_path, 'w') as f:
+                f.write(f"# Detection failures — {datetime.now().isoformat()}\n")
+                f.write(f"# {len(all_failed_pdfs)} failed PDF(s)\n")
+                f.write(f"# status: extraction_failed | inference_failed\n\n")
+                for pdf_name, status in sorted(all_failed_pdfs.items()):
+                    f.write(f"{status}\t{pdf_name}\n")
+            if self.verbose:
+                print(f"✓ Failed PDFs saved to: {failures_path}")
 
         # Log timing data to CSV if requested (always log, even for fully cached runs)
         if timing_log:
