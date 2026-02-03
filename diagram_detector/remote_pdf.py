@@ -232,6 +232,39 @@ def _log_pdf_status(
         writer.writerow(row)
 
 
+def extract_pdf_to_jpegs(pdf_path: Path, output_dir: Path, dpi: int, show_progress: bool = False) -> List[Path]:
+    """Extract all pages of a PDF to JPEG files in *output_dir*.
+
+    Shared by the remote upload path and the local chunked-inference path so
+    that extraction behaviour (naming, quality, progress) is identical.
+
+    Args:
+        pdf_path: Path to the source PDF.
+        output_dir: Directory in which to write ``page_0001.jpg`` … files.
+            Created if it does not exist.
+        dpi: Rendering resolution.
+        show_progress: Show a tqdm progress bar during rendering.
+
+    Returns:
+        List of JPEG paths, one per page, in page order.
+
+    Raises:
+        Any exception from PyMuPDF / PIL propagates to the caller.
+    """
+    from PIL import Image
+
+    images = convert_pdf_to_images(pdf_path, dpi=dpi, verbose=False, show_progress=show_progress)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths: List[Path] = []
+    for page_num, img_array in enumerate(images, start=1):
+        img_path = output_dir / f"page_{page_num:04d}.jpg"
+        Image.fromarray(img_array).save(img_path, "JPEG", quality=95)
+        image_paths.append(img_path)
+
+    return image_paths
+
+
 class PDFRemoteDetector:
     """
     Remote detector optimized for PDF processing.
@@ -368,35 +401,8 @@ class PDFRemoteDetector:
             self.remote_detector.cleanup()
 
     def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
-        """
-        Extract PDF pages to images locally.
-
-        Args:
-            pdf_path: Path to PDF
-            output_dir: Where to save images
-
-        Returns:
-            List of image paths
-        """
-        # Convert PDF to images (show progress bar but no verbose messages)
-        images = convert_pdf_to_images(pdf_path, dpi=self.dpi, verbose=False, show_progress=self.verbose)
-
-        # Save images
-        output_dir.mkdir(parents=True, exist_ok=True)
-        image_paths = []
-
-        from PIL import Image
-
-        for page_num, img_array in enumerate(images, start=1):
-            img_path = output_dir / f"page_{page_num:04d}.jpg"
-            Image.fromarray(img_array).save(img_path, "JPEG", quality=95)
-            image_paths.append(img_path)
-
-        # Skip per-PDF completion message - shows in batch summary instead
-        # if self.verbose:
-        #     print(f"  ✓ {pdf_path.name}: {len(image_paths)} pages")
-
-        return image_paths
+        """Extract PDF pages to images locally (delegates to shared helper)."""
+        return extract_pdf_to_jpegs(pdf_path, output_dir, self.dpi, show_progress=self.verbose)
 
     def _extract_pdfs_parallel(
         self, pdf_batch: List[Path], batch_dir: Path
