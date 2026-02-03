@@ -1365,6 +1365,10 @@ class SSHRemoteDetector:
 
         if self.verbose:
             print("  Starting persistent inference server on remote...")
+            if self.tensorrt:
+                print("    (loading TensorRT engine into GPU — one-time per run, ~5-15 s)")
+            else:
+                print("    (loading model into GPU — one-time per run)")
 
         # stderr → DEVNULL: the server redirects all detector output (YOLO
         # progress bars, [DEBUG] lines) to stderr.  Capturing it via PIPE would
