@@ -173,8 +173,9 @@ class DiagramDetector:
             except Exception:
                 gpu_name = "unknown_gpu"
 
-            # Engine path includes model name, imgsz, and GPU for uniqueness
-            engine_path = model_path.parent / f"{self.model_name}_imgsz{imgsz}_{gpu_name}.engine"
+            # Engine path includes model name, imgsz, batch, and GPU for uniqueness
+            # (engines are batch-size-specific and GPU-specific)
+            engine_path = model_path.parent / f"{self.model_name}_imgsz{imgsz}_batch{self.batch_size}_{gpu_name}.engine"
 
             if engine_path.exists():
                 if self.verbose:
@@ -195,6 +196,7 @@ class DiagramDetector:
                     format="engine",
                     half=True,  # FP16 for speed
                     imgsz=imgsz,
+                    batch=self.batch_size,
                     device=0,  # Use first GPU
                     verbose=self.verbose,
                 )

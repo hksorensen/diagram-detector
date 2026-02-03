@@ -1366,7 +1366,7 @@ class SSHRemoteDetector:
         if self.verbose:
             print("  Starting persistent inference server on remote...")
             if self.tensorrt:
-                print("    (loading TensorRT engine into GPU — one-time per run, ~5-15 s)")
+                print("    (TensorRT: first run exports engine ~5 min; cached runs ~5-15 s)")
             else:
                 print("    (loading model into GPU — one-time per run)")
 
