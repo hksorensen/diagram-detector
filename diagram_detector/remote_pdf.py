@@ -931,8 +931,12 @@ class PDFRemoteDetector:
                             if pdf_path.name not in batch_results:
                                 import logging
                                 logger = logging.getLogger(__name__)
-                                logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
-                                logger.warning(f"  This PDF will be reprocessed on next run")
+                                pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+                                if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
+                                    logger.info(f"Not caching {pdf_path.name} - skipped (size limit: {pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                                else:
+                                    logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
+                                    logger.warning(f"  This PDF will be reprocessed on next run")
                                 continue
 
                             # Convert DetectionResult objects to dicts for JSON serialization
