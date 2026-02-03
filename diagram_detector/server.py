@@ -106,8 +106,8 @@ def main():
             break
 
         if cmd_type == "infer":
-            input_dir = Path(cmd["input"])
-            output_dir = Path(cmd["output"])
+            input_dir = Path(cmd["input"]).expanduser()
+            output_dir = Path(cmd["output"]).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
 
             try:
