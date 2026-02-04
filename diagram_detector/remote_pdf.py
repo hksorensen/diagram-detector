@@ -835,7 +835,7 @@ class PDFRemoteDetector:
         logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
         logger.info(f"  Total:       {total_time:6.1f}s")
         logger.info(f"  Throughput:  {len(all_images)/total_time:.1f} pages/s")
-        logger.info(f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(len(r) for r in pdf_results.values())} diagrams")
+        logger.info(f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(r.count for page_results in pdf_results.values() for r in page_results)} diagrams")
 
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
