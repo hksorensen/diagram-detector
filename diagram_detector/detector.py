@@ -693,16 +693,15 @@ class DiagramDetector:
             )
             results.append(result)
 
-        # Force garbage collection to close file descriptors (but only occasionally)
-        # gc.collect() is expensive (~0.9s), so only call every 256 images to balance
-        # file descriptor leaks vs performance. With ulimit -n 4096, this allows ~1500
-        # images before exhaustion (each image ~2 FDs), giving safe headroom.
+        # Force garbage collection to close file descriptors leaked by YOLO
+        # predict().  Interval kept low (64) because multiple inference workers
+        # share the same process FD table — with N workers the effective
+        # interval is N×64 images between cleanups.
         if not hasattr(self, '_images_processed'):
             self._images_processed = 0
         self._images_processed += len(image_paths)
 
-        # Call gc.collect() every 256 images (8 batches of 32)
-        if self._images_processed % 256 < len(image_paths):
+        if self._images_processed % 64 < len(image_paths):
             gc.collect()
 
         # Free GPU memory after each inference batch so the next sub-batch (or next process)
