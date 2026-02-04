@@ -123,6 +123,8 @@ class DiagramDetector:
         else:
             self.batch_size = batch_size
 
+        self._tensorrt = tensorrt  # tracked for padding logic in _detect_batch
+
         # Handle model loading - support both named models and local .pt files
         if model_as_path.exists() and model_as_path.suffix == '.pt':
             # Local .pt file provided - install it to cache
@@ -609,9 +611,19 @@ class DiagramDetector:
             sys.stderr = stderr_capture
 
             try:
-                print(f"[DEBUG] _detect_batch(): about to model.predict() on {len(image_paths)} images", flush=True)
+                # TensorRT engines have a static batch size — the last sub-batch
+                # may be smaller.  Pad by repeating the first image; results for
+                # the padding slots are discarded after predict().
+                predict_paths = image_paths
+                pad_count = 0
+                if self._tensorrt and len(image_paths) < self.batch_size:
+                    pad_count = self.batch_size - len(image_paths)
+                    predict_paths = list(image_paths) + [image_paths[0]] * pad_count
+                    print(f"[DEBUG] _detect_batch(): TensorRT pad {len(image_paths)} → {len(predict_paths)} (padding {pad_count})", flush=True)
+
+                print(f"[DEBUG] _detect_batch(): about to model.predict() on {len(predict_paths)} images", flush=True)
                 yolo_results = self.model.predict(
-                    source=[str(p) for p in image_paths],
+                    source=[str(p) for p in predict_paths],
                     conf=self.confidence,
                     iou=self.iou,
                     device=self.device,
@@ -619,6 +631,11 @@ class DiagramDetector:
                     stream=False,
                     imgsz=self.imgsz,  # Matches training config (config.yaml:image_size)
                 )
+
+                # Trim padding slots
+                if pad_count > 0:
+                    yolo_results = yolo_results[: len(image_paths)]
+
                 print(f"[DEBUG] _detect_batch(): predict() returned {len(yolo_results)} results", flush=True)
                 try:
                     import torch
