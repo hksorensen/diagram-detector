@@ -303,6 +303,7 @@ class PDFRemoteDetector:
         tensorrt: bool = False,
         upload_workers: Optional[int] = None,
         max_pdf_size_mb: Optional[float] = None,
+        max_pdf_size_pages: Optional[int] = None,
         use_persistent_server: bool = False,
     ):
         """
@@ -329,6 +330,7 @@ class PDFRemoteDetector:
             tensorrt: Use TensorRT optimization on remote (NVIDIA GPU only, 2-3x faster)
             upload_workers: Number of parallel rsync workers (None = auto: min(5, max(1, files//50)))
             max_pdf_size_mb: Skip PDFs larger than this (MB). None = no limit. Useful for slow networks.
+            max_pdf_size_pages: Skip PDFs with more pages than this. None = no limit. Page count is read before extraction (fast).
             use_persistent_server: Keep model resident in GPU memory across sub-batches (~3-5s reload saved per batch)
         """
         # Auto-load config if not provided
@@ -348,6 +350,7 @@ class PDFRemoteDetector:
         self.parallel_extract = parallel_extract
         self.max_workers = max_workers
         self.max_pdf_size_mb = max_pdf_size_mb
+        self.max_pdf_size_pages = max_pdf_size_pages
 
         self.tensorrt = tensorrt
 
@@ -431,6 +434,19 @@ class PDFRemoteDetector:
         if not self.parallel_extract or len(pdf_batch) == 1:
             # Sequential extraction
             for pdf_path in pdf_batch:
+                pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+                if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
+                    logger.warning(f"SKIPPING large PDF: {pdf_path.name} ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB")
+                    pdf_images[pdf_path.name] = None
+                    continue
+                if self.max_pdf_size_pages is not None:
+                    import fitz
+                    with fitz.open(pdf_path) as doc:
+                        num_pages = doc.page_count
+                    if num_pages > self.max_pdf_size_pages:
+                        logger.warning(f"SKIPPING large PDF: {pdf_path.name} ({num_pages} pages) exceeds limit of {self.max_pdf_size_pages} pages")
+                        pdf_images[pdf_path.name] = None
+                        continue
                 pdf_dir = batch_dir / pdf_path.stem
                 image_paths = self._extract_pdf_pages(pdf_path, pdf_dir)
                 pdf_images[pdf_path.name] = image_paths
@@ -455,9 +471,19 @@ class PDFRemoteDetector:
                         skipped_pdfs.append(pdf_path)
                         continue
 
-                    # Warn about large files (but still process them)
-                    if pdf_size_mb > 50:
-                        logger.warning(f"Large PDF file: {pdf_path.name} ({pdf_size_mb:.1f} MB)")
+                    # Check if PDF exceeds page limit (page_count reads only trailer — ~0.1 ms)
+                    if self.max_pdf_size_pages is not None:
+                        import fitz
+                        with fitz.open(pdf_path) as doc:
+                            num_pages = doc.page_count
+                        if num_pages > self.max_pdf_size_pages:
+                            logger.warning(
+                                f"SKIPPING large PDF: {pdf_path.name} ({num_pages} pages) "
+                                f"exceeds limit of {self.max_pdf_size_pages} pages"
+                            )
+                            pdf_images[pdf_path.name] = None  # Mark as skipped
+                            skipped_pdfs.append(pdf_path)
+                            continue
 
                     pdf_dir = batch_dir / pdf_path.stem
                     future = executor.submit(self._extract_pdf_pages, pdf_path, pdf_dir)
@@ -484,10 +510,6 @@ class PDFRemoteDetector:
                         pdf_images[pdf_path.name] = image_paths
                         num_pages = len(image_paths) if image_paths else 0
                         total_pages += num_pages
-
-                        # Warn if PDF is unusually large
-                        if num_pages > 500:
-                            logger.warning(f"Large PDF: {pdf_path.name} has {num_pages} pages")
                     except TimeoutError:
                         logger.error(f"PDF extraction TIMEOUT for {pdf_path.name} (exceeded 10 minutes)")
                         logger.error(f"  PDF path: {pdf_path}")
@@ -578,18 +600,52 @@ class PDFRemoteDetector:
                     if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
                         # Skipped due to size limit
                         logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
-                        batch_failed[pdf_name] = "extraction_failed"
+                        batch_failed[pdf_name] = "size_limit_exceeded"
                         if manifest_path:
                             _log_pdf_status(
                                 manifest_path=manifest_path,
                                 pdf_name=pdf_name,
-                                status="extraction_failed",
+                                status="size_limit_exceeded",
                                 pages_extracted=0,
                                 pages_detected=0,
                                 num_diagrams=0,
                                 error_type="SizeLimitExceeded",
                                 error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
                             )
+                    elif self.max_pdf_size_pages is not None:
+                        # Check if skipped due to page limit (page count already read pre-extraction)
+                        import fitz
+                        with fitz.open(pdf_path) as doc:
+                            num_pages = doc.page_count
+                        if num_pages > self.max_pdf_size_pages:
+                            logger.warning(f"Skipping {pdf_name} due to page limit ({num_pages} pages > {self.max_pdf_size_pages} pages)")
+                            batch_failed[pdf_name] = "page_limit_exceeded"
+                            if manifest_path:
+                                _log_pdf_status(
+                                    manifest_path=manifest_path,
+                                    pdf_name=pdf_name,
+                                    status="page_limit_exceeded",
+                                    pages_extracted=0,
+                                    pages_detected=0,
+                                    num_diagrams=0,
+                                    error_type="PageLimitExceeded",
+                                    error_message=f"PDF has {num_pages} pages, exceeds limit of {self.max_pdf_size_pages} pages"
+                                )
+                        else:
+                            # Page limit set but this PDF is within limit — genuine extraction failure
+                            logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                            batch_failed[pdf_name] = "extraction_failed"
+                            if manifest_path:
+                                _log_pdf_status(
+                                    manifest_path=manifest_path,
+                                    pdf_name=pdf_name,
+                                    status="extraction_failed",
+                                    pages_extracted=0,
+                                    pages_detected=0,
+                                    num_diagrams=0,
+                                    error_type="ExtractionFailure",
+                                    error_message="PDF extraction returned None (exception occurred)"
+                                )
                     else:
                         # Extraction failed for other reason
                         logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
@@ -954,6 +1010,15 @@ class PDFRemoteDetector:
                                 pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
                                 if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
                                     logger.info(f"Not caching {pdf_path.name} - skipped (size limit: {pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                                elif self.max_pdf_size_pages is not None:
+                                    import fitz
+                                    with fitz.open(pdf_path) as doc:
+                                        num_pages = doc.page_count
+                                    if num_pages > self.max_pdf_size_pages:
+                                        logger.info(f"Not caching {pdf_path.name} - skipped (page limit: {num_pages} pages > {self.max_pdf_size_pages} pages)")
+                                    else:
+                                        logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
+                                        logger.warning(f"  This PDF will be reprocessed on next run")
                                 else:
                                     logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
                                     logger.warning(f"  This PDF will be reprocessed on next run")
