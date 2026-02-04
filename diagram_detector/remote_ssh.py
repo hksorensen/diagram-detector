@@ -1412,7 +1412,7 @@ class SSHRemoteDetector:
             )
 
         input_dir  = f"{self.config.remote_work_dir}/input/{batch_id}"
-        output_dir = f"{self.config.remote_work_dir}/results/{self.run_id}/{batch_id}"
+        output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"  # must match _download_results
 
         cmd = json.dumps({"type": "infer", "input": input_dir, "output": output_dir})
         self._server_proc.stdin.write(cmd + "\n")
