@@ -220,8 +220,10 @@ class DetectionCache:
         iou_rounded = round(iou, 3)
 
         # Build key with ALL parameters
+        # CRITICAL FIX: Use full absolute path to prevent collisions between
+        # PDFs with same filename in different directories
         key_data = (
-            f"pdf:{pdf_path.name}"
+            f"pdf:{pdf_path.resolve()}"
             f"|size:{stat.st_size}"
             f"|mtime:{int(stat.st_mtime)}"
             f"|model:{model}"

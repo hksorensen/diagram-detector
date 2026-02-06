@@ -252,13 +252,20 @@ def extract_pdf_to_jpegs(pdf_path: Path, output_dir: Path, dpi: int, show_progre
         Any exception from PyMuPDF / PIL propagates to the caller.
     """
     from PIL import Image
+    import shutil
 
     images = convert_pdf_to_images(pdf_path, dpi=dpi, verbose=False, show_progress=show_progress)
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # CRITICAL FIX: Clear any existing JPEGs to prevent contamination
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True)
 
     image_paths: List[Path] = []
+    # Include PDF stem in JPEG filename for traceability
+    pdf_stem = pdf_path.stem
     for page_num, img_array in enumerate(images, start=1):
-        img_path = output_dir / f"page_{page_num:04d}.jpg"
+        img_path = output_dir / f"{pdf_stem}_page_{page_num:04d}.jpg"
         Image.fromarray(img_array).save(img_path, "JPEG", quality=95)
         image_paths.append(img_path)
 
