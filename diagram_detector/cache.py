@@ -3,10 +3,6 @@ Detection results cache with SQLite backend.
 
 Supports thread-safe caching with proper cache keys that include
 all detection parameters (model, confidence, iou, dpi).
-
-TODO: Remove legacy cache key fallback once pressure for results subsides.
-      Currently maintaining backward compatibility with 18,740 cache entries (16.2 MB)
-      created before the contamination fix. See _compute_cache_key_legacy() and get().
 """
 
 import sqlite3
@@ -224,49 +220,9 @@ class DetectionCache:
         iou_rounded = round(iou, 3)
 
         # Build key with ALL parameters
-        # CRITICAL FIX: Use full absolute path to prevent collisions between
-        # PDFs with same filename in different directories
+        # Use filename (not full path) - PDFs have unique IDs (DOI/arXiv)
         key_data = (
-            f"pdf:{pdf_path.resolve()}"
-            f"|size:{stat.st_size}"
-            f"|mtime:{int(stat.st_mtime)}"
-            f"|model:{model}"
-            f"|conf:{conf_rounded}"
-            f"|iou:{iou_rounded}"
-            f"|dpi:{dpi}"
-            f"|imgsz:{imgsz}"
-        )
-
-        return hashlib.sha256(key_data.encode()).hexdigest()
-
-    def _compute_cache_key_legacy(
-        self, pdf_path: Path, model: str, confidence: float, iou: float, dpi: int, imgsz: int
-    ) -> str:
-        """
-        Compute cache key using LEGACY format (filename only).
-
-        TODO: Remove this fallback once cache is migrated or pressure for results subsides.
-              This exists to preserve 18,740 cache entries (16.2 MB) created before
-              the contamination fix. New entries use full path format.
-
-        Args:
-            pdf_path: Path to PDF file
-            model: Model name
-            confidence: Confidence threshold (rounded to 3 decimals)
-            iou: IoU threshold (rounded to 3 decimals)
-            dpi: DPI for PDF conversion
-            imgsz: Image size for preprocessing
-
-        Returns:
-            SHA-256 hash of key components (legacy format with filename only)
-        """
-        stat = pdf_path.stat()
-        conf_rounded = round(confidence, 3)
-        iou_rounded = round(iou, 3)
-
-        # LEGACY format: uses filename only (before contamination fix)
-        key_data = (
-            f"pdf:{pdf_path.name}"  # OLD: filename only
+            f"pdf:{pdf_path.name}"
             f"|size:{stat.st_size}"
             f"|mtime:{int(stat.st_mtime)}"
             f"|model:{model}"
@@ -292,9 +248,6 @@ class DetectionCache:
 
         Returns None if not cached or parameters don't match.
 
-        NOTE: Includes fallback to legacy cache key format to preserve existing cache
-              entries from before the contamination fix. See _compute_cache_key_legacy().
-
         Args:
             pdf_path: Path to PDF file
             model: Model name
@@ -306,24 +259,12 @@ class DetectionCache:
         Returns:
             List of detection results (dicts) or None if not cached
         """
-        # Try new format first (full path)
         cache_key = self._compute_cache_key(pdf_path, model, confidence, iou, dpi, imgsz)
 
         row = self.conn.query_one(
             "SELECT results_compressed, access_count FROM detection_cache WHERE cache_key = ?",
             (cache_key,)
         )
-
-        # FALLBACK: Try legacy format (filename only) if new format not found
-        # TODO: Remove this fallback once cache is migrated or pressure subsides
-        if row is None:
-            cache_key_legacy = self._compute_cache_key_legacy(pdf_path, model, confidence, iou, dpi, imgsz)
-            row = self.conn.query_one(
-                "SELECT results_compressed, access_count FROM detection_cache WHERE cache_key = ?",
-                (cache_key_legacy,)
-            )
-            if row is not None:
-                cache_key = cache_key_legacy  # Use legacy key for access tracking
 
         if row is None:
             return None
