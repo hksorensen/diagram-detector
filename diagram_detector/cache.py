@@ -220,9 +220,14 @@ class DetectionCache:
         iou_rounded = round(iou, 3)
 
         # Build key with ALL parameters
-        # Use filename (not full path) - PDFs have unique IDs (DOI/arXiv)
+        # Use content hash (first 1MB) for collision-free, portable keys
+        pdf_hash = hashlib.sha256()
+        with pdf_path.open('rb') as f:
+            pdf_hash.update(f.read(1024 * 1024))  # Hash first 1MB
+
         key_data = (
-            f"pdf:{pdf_path.name}"
+            f"pdf:{pdf_path.name}"  # Filename for human readability
+            f"|hash:{pdf_hash.hexdigest()[:16]}"  # Content hash (collision-free)
             f"|size:{stat.st_size}"
             f"|mtime:{int(stat.st_mtime)}"
             f"|model:{model}"
