@@ -1010,14 +1010,15 @@ class SSHRemoteDetector:
                 else:
                     # Multiple groups - parallel rsync
                     with ThreadPoolExecutor(max_workers=len(file_groups)) as executor:
-                        futures = {
-                            executor.submit(rsync_file_group, idx, group): idx
+                        # CRITICAL FIX: Store futures in order, not as dict
+                        # Wait for completion in submission order to preserve file order on remote
+                        futures_in_order = [
+                            (executor.submit(rsync_file_group, idx, group), idx)
                             for idx, group in enumerate(file_groups)
-                        }
+                        ]
 
-                        for future in as_completed(futures):
-                            group_idx = futures[future]
-                            success, error = future.result()
+                        for future, group_idx in futures_in_order:
+                            success, error = future.result()  # Wait in submission order!
 
                             if not success:
                                 logger.error(f"Rsync group {group_idx} failed: {error}")
