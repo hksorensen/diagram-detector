@@ -572,25 +572,63 @@ class SSHRemoteDetector:
             # Might fail if no changes (already committed) - that's ok
             return False
 
-    def _verify_connection(self) -> None:
-        """Verify SSH connection works."""
+    def _verify_connection(self, max_retries: int = 5, initial_delay: float = 5.0) -> None:
+        """Verify SSH connection works with retry logic.
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            initial_delay: Initial delay in seconds (doubles each retry)
+
+        Raises:
+            RuntimeError: If connection fails after all retries
+        """
+        import time
+
         if self.verbose:
             print(f"Verifying SSH connection to {self.config.ssh_target}:{self.config.port}...")
 
-        try:
-            cmd = ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, 'echo "OK"']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        delay = initial_delay
+        last_error = None
 
-            if result.returncode != 0:
-                raise RuntimeError(f"SSH connection failed: {result.stderr}")
+        for attempt in range(max_retries):
+            try:
+                cmd = ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, 'echo "OK"']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
-            if self.verbose:
-                print("✓ SSH connection verified")
+                if result.returncode != 0:
+                    raise RuntimeError(f"SSH connection failed: {result.stderr}")
 
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("SSH connection timed out")
-        except Exception as e:
-            raise RuntimeError(f"SSH connection failed: {e}")
+                if self.verbose:
+                    if attempt > 0:
+                        print(f"✓ SSH connection verified (after {attempt + 1} attempts)")
+                    else:
+                        print("✓ SSH connection verified")
+                return  # Success!
+
+            except subprocess.TimeoutExpired as e:
+                last_error = RuntimeError("SSH connection timed out")
+            except Exception as e:
+                last_error = RuntimeError(f"SSH connection failed: {e}")
+
+            # If this wasn't the last attempt, wait and retry
+            if attempt < max_retries - 1:
+                retry_msg = f"⚠ SSH connection failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.1f}s..."
+                if self.verbose:
+                    print(retry_msg)
+                else:
+                    # Always log retries even if not verbose (important for unsupervised runs)
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(retry_msg)
+
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                # Last attempt failed
+                error_msg = f"SSH connection failed after {max_retries} attempts: {last_error}"
+                if self.verbose:
+                    print(f"✗ {error_msg}")
+                raise RuntimeError(error_msg)
 
     def _measure_network_throughput(self) -> None:
         """
