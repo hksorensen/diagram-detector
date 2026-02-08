@@ -600,63 +600,76 @@ class PDFRemoteDetector:
         # Flatten to all images
         all_images = []
         pdf_page_counts = {}
-        for pdf_name, image_paths in pdf_images.items():
+
+        # ═══════════════════════════════════════════════════════════════════
+        # BUG DETECTION: Check if pdf_images order matches pdf_batch order
+        # ═══════════════════════════════════════════════════════════════════
+        pdf_images_order = [name for name in pdf_images.keys()]
+        pdf_batch_order = [p.name for p in pdf_batch if p.name in pdf_images]
+
+        if pdf_images_order != pdf_batch_order:
+            logger.error(f"")
+            logger.error(f"{'═' * 70}")
+            logger.error(f"ORDER MISMATCH DETECTED - ROOT CAUSE OF CONTAMINATION!")
+            logger.error(f"{'═' * 70}")
+            logger.error(f"pdf_images dict order: {pdf_images_order[:5]}")
+            logger.error(f"pdf_batch list order:  {pdf_batch_order[:5]}")
+            logger.error(f"")
+            logger.error(f"This will cause results to be assigned to wrong PDFs!")
+            logger.error(f"all_images will be built in pdf_images order,")
+            logger.error(f"but results will be sliced in pdf_batch order.")
+            logger.error(f"{'═' * 70}")
+
+        # CRITICAL FIX: Iterate in pdf_batch order, not pdf_images.items() order!
+        # This ensures all_images matches the order used for result slicing
+        logger.debug(f"Building all_images in pdf_batch order...")
+        for pdf_path in pdf_batch:
+            pdf_name = pdf_path.name
+            if pdf_name not in pdf_images:
+                # PDF extraction failed - already logged, skip
+                continue
+
+            image_paths = pdf_images[pdf_name]
             if image_paths is None:
                 # Extraction failed or skipped - determine reason
-                pdf_path = next((p for p in pdf_batch if p.name == pdf_name), None)
-                if pdf_path:
-                    pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
-                    if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
-                        # Skipped due to size limit
-                        logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
-                        batch_failed[pdf_name] = "size_limit_exceeded"
+                # (pdf_path already available from loop iteration)
+                pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
+                if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
+                    # Skipped due to size limit
+                    logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                    batch_failed[pdf_name] = "size_limit_exceeded"
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf_name,
+                            status="size_limit_exceeded",
+                            pages_extracted=0,
+                            pages_detected=0,
+                            num_diagrams=0,
+                            error_type="SizeLimitExceeded",
+                            error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
+                        )
+                elif self.max_pdf_size_pages is not None:
+                    # Check if skipped due to page limit (page count already read pre-extraction)
+                    import fitz
+                    with fitz.open(pdf_path) as doc:
+                        num_pages = doc.page_count
+                    if num_pages > self.max_pdf_size_pages:
+                        logger.warning(f"Skipping {pdf_name} due to page limit ({num_pages} pages > {self.max_pdf_size_pages} pages)")
+                        batch_failed[pdf_name] = "page_limit_exceeded"
                         if manifest_path:
                             _log_pdf_status(
                                 manifest_path=manifest_path,
                                 pdf_name=pdf_name,
-                                status="size_limit_exceeded",
+                                status="page_limit_exceeded",
                                 pages_extracted=0,
                                 pages_detected=0,
                                 num_diagrams=0,
-                                error_type="SizeLimitExceeded",
-                                error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
+                                error_type="PageLimitExceeded",
+                                error_message=f"PDF has {num_pages} pages, exceeds limit of {self.max_pdf_size_pages} pages"
                             )
-                    elif self.max_pdf_size_pages is not None:
-                        # Check if skipped due to page limit (page count already read pre-extraction)
-                        import fitz
-                        with fitz.open(pdf_path) as doc:
-                            num_pages = doc.page_count
-                        if num_pages > self.max_pdf_size_pages:
-                            logger.warning(f"Skipping {pdf_name} due to page limit ({num_pages} pages > {self.max_pdf_size_pages} pages)")
-                            batch_failed[pdf_name] = "page_limit_exceeded"
-                            if manifest_path:
-                                _log_pdf_status(
-                                    manifest_path=manifest_path,
-                                    pdf_name=pdf_name,
-                                    status="page_limit_exceeded",
-                                    pages_extracted=0,
-                                    pages_detected=0,
-                                    num_diagrams=0,
-                                    error_type="PageLimitExceeded",
-                                    error_message=f"PDF has {num_pages} pages, exceeds limit of {self.max_pdf_size_pages} pages"
-                                )
-                        else:
-                            # Page limit set but this PDF is within limit — genuine extraction failure
-                            logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
-                            batch_failed[pdf_name] = "extraction_failed"
-                            if manifest_path:
-                                _log_pdf_status(
-                                    manifest_path=manifest_path,
-                                    pdf_name=pdf_name,
-                                    status="extraction_failed",
-                                    pages_extracted=0,
-                                    pages_detected=0,
-                                    num_diagrams=0,
-                                    error_type="ExtractionFailure",
-                                    error_message="PDF extraction returned None (exception occurred)"
-                                )
                     else:
-                        # Extraction failed for other reason
+                        # Page limit set but this PDF is within limit — genuine extraction failure
                         logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
                         batch_failed[pdf_name] = "extraction_failed"
                         if manifest_path:
@@ -671,8 +684,20 @@ class PDFRemoteDetector:
                                 error_message="PDF extraction returned None (exception occurred)"
                             )
                 else:
-                    # Shouldn't happen, but handle gracefully
-                    logger.warning(f"Skipping {pdf_name} due to extraction failure (PDF not found in batch)")
+                    # Extraction failed for other reason
+                    logger.warning(f"Skipping {pdf_name} due to extraction failure (None)")
+                    batch_failed[pdf_name] = "extraction_failed"
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf_name,
+                            status="extraction_failed",
+                            pages_extracted=0,
+                            pages_detected=0,
+                            num_diagrams=0,
+                            error_type="ExtractionFailure",
+                            error_message="PDF extraction returned None (exception occurred)"
+                        )
 
                 continue
 
@@ -697,6 +722,19 @@ class PDFRemoteDetector:
                         error_message="PDF extraction returned 0 pages (all pages failed to render)"
                     )
                 continue
+
+            # FORENSIC LOGGING: Track image additions for contamination debugging
+            if len(all_images) < 100:  # Log first few to avoid spam
+                logger.debug(f"Adding {len(image_paths)} images for {pdf_name}")
+                if len(image_paths) > 0:
+                    logger.debug(f"  Sample: {image_paths[0].name}")
+                    # Verify image filename contains PDF stem
+                    expected_stem = pdf_name.rsplit('.', 1)[0]  # Remove .pdf extension
+                    if expected_stem not in image_paths[0].name:
+                        logger.warning(f"  WARNING: Image name doesn't contain PDF stem!")
+                        logger.warning(f"    PDF name: {pdf_name}")
+                        logger.warning(f"    Expected stem: {expected_stem}")
+                        logger.warning(f"    Image name: {image_paths[0].name}")
 
             all_images.extend(image_paths)
             pdf_page_counts[pdf_name] = len(image_paths)
@@ -756,6 +794,85 @@ class PDFRemoteDetector:
                 continue
 
             pdf_result_list = results[result_idx : result_idx + num_pages]
+
+            # ═══════════════════════════════════════════════════════════════════
+            # VALIDATION: Verify filenames match PDF stem (catch contamination bug)
+            # ═══════════════════════════════════════════════════════════════════
+            expected_pdf_stem = pdf_path.stem
+            filename_mismatches = []
+
+            for page_idx, result in enumerate(pdf_result_list):
+                # Each result should have filename containing the PDF stem
+                if hasattr(result, 'filename') and result.filename:
+                    if expected_pdf_stem not in result.filename:
+                        filename_mismatches.append({
+                            'page_idx': page_idx,
+                            'expected_stem': expected_pdf_stem,
+                            'actual_filename': result.filename,
+                            'result_global_idx': result_idx + page_idx,
+                        })
+
+            if filename_mismatches:
+                logger.error(f"")
+                logger.error(f"{'═' * 70}")
+                logger.error(f"CONTAMINATION DETECTED: Filename mismatch in batch {batch_id}")
+                logger.error(f"{'═' * 70}")
+                logger.error(f"PDF: {pdf_path.name}")
+                logger.error(f"Expected stem: {expected_pdf_stem}")
+                logger.error(f"Result slice: [{result_idx}:{result_idx + num_pages}]")
+                logger.error(f"Mismatches found: {len(filename_mismatches)}/{num_pages} pages")
+                logger.error(f"")
+
+                # Log first few mismatches for diagnosis
+                for mm in filename_mismatches[:5]:
+                    logger.error(f"  Page {mm['page_idx'] + 1}:")
+                    logger.error(f"    Expected stem:    {mm['expected_stem']}")
+                    logger.error(f"    Actual filename:  {mm['actual_filename']}")
+                    logger.error(f"    Result index:     {mm['result_global_idx']}")
+
+                if len(filename_mismatches) > 5:
+                    logger.error(f"  ... and {len(filename_mismatches) - 5} more")
+
+                logger.error(f"")
+                logger.error(f"This indicates the result slicing is incorrect!")
+                logger.error(f"Possible causes:")
+                logger.error(f"  - pdf_page_counts is wrong for earlier PDFs")
+                logger.error(f"  - pdf_batch iteration order changed")
+                logger.error(f"  - all_images order doesn't match pdf_batch order")
+                logger.error(f"{'═' * 70}")
+
+                # Log forensic info for debugging
+                logger.debug(f"")
+                logger.debug(f"FORENSIC INFO:")
+                logger.debug(f"  Current PDF: {pdf_path.name}")
+                logger.debug(f"  Current result_idx: {result_idx}")
+                logger.debug(f"  Current num_pages: {num_pages}")
+                logger.debug(f"  Total results: {len(results)}")
+                logger.debug(f"  pdf_page_counts keys: {list(pdf_page_counts.keys())[:10]}")
+
+                # CRITICAL: Don't cache contaminated results!
+                batch_failed[pdf_path.name] = "contamination_detected"
+                if manifest_path:
+                    _log_pdf_status(
+                        manifest_path=manifest_path,
+                        pdf_name=pdf_path.name,
+                        status="contamination_detected",
+                        pages_extracted=num_pages,
+                        pages_detected=len(pdf_result_list),
+                        num_diagrams=sum(r.count for r in pdf_result_list),
+                        error_type="FilenameMismatch",
+                        error_message=f"{len(filename_mismatches)}/{num_pages} pages have wrong filenames"
+                    )
+
+                # Skip this PDF - don't add to pdf_results (prevents caching)
+                result_idx += len(pdf_result_list)
+                continue
+
+            # Log success for first few PDFs (helps verify correct mapping)
+            if len(pdf_results) < 3:
+                logger.debug(f"✓ Filename validation passed for {pdf_path.name}")
+                if len(pdf_result_list) > 0:
+                    logger.debug(f"  Sample filenames: {[r.filename for r in pdf_result_list[:2]]}")
 
             # CRITICAL: Check if slice returned empty results
             # This happens when inference returned fewer results than expected
