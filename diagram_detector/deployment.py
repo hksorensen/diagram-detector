@@ -703,17 +703,22 @@ def deploy_to_remote(
     temp_info = Path("/tmp/deployment_info.json")
     temp_info.write_text(info_json)
 
-    # Copy to remote
+    # Copy to remote (non-fatal - deployment already succeeded)
     scp_info_cmd = [
         "scp", "-P", str(config.port),
         str(temp_info),
         f"{config.user}@{config.host}:~/diagram-detector/.deployment_info.json"
     ]
-    subprocess.run(scp_info_cmd, check=True)
-    temp_info.unlink()
-
-    if verbose:
-        print("✓ Deployment info saved")
+    try:
+        subprocess.run(scp_info_cmd, check=True, timeout=30)
+        if verbose:
+            print("✓ Deployment info saved")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        if verbose:
+            print(f"⚠ Could not save deployment info (non-fatal): {e}")
+            print("  Deployment succeeded, but metadata was not saved to remote")
+    finally:
+        temp_info.unlink(missing_ok=True)
 
     # Final summary
     if verbose:
