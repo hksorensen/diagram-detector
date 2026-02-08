@@ -463,8 +463,9 @@ class PDFRemoteDetector:
             # Parallel extraction
             logger.debug(f"[EXTRACTION] Creating ThreadPoolExecutor with {self.max_workers} workers")
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit extraction tasks, skipping PDFs that exceed size limit
-                future_to_pdf = {}
+                # Submit extraction tasks in pdf_batch order, preserving order
+                # CRITICAL: Use list of (future, pdf_path) tuples to maintain order
+                futures_in_order = []
                 skipped_pdfs = []
 
                 for pdf_path in pdf_batch:
@@ -496,22 +497,22 @@ class PDFRemoteDetector:
 
                     pdf_dir = batch_dir / pdf_path.stem
                     future = executor.submit(self._extract_pdf_pages, pdf_path, pdf_dir)
-                    future_to_pdf[future] = pdf_path
+                    futures_in_order.append((future, pdf_path))
 
-                logger.debug(f"[EXTRACTION] Submitted {len(future_to_pdf)} extraction tasks, skipped {len(skipped_pdfs)} large PDFs")
+                logger.debug(f"[EXTRACTION] Submitted {len(futures_in_order)} extraction tasks, skipped {len(skipped_pdfs)} large PDFs")
 
-                # Collect results as they complete with progress tracking
+                # CRITICAL FIX: Wait for results in submission order (pdf_batch order)
+                # Do NOT use as_completed() which returns in completion order!
                 from tqdm import tqdm
                 completed_count = 0
                 total_pages = 0
                 extraction_start_time = time.time()
 
                 if self.verbose:
-                    progress = tqdm(total=len(future_to_pdf), desc="  Extracting", unit="PDF", leave=False,
+                    progress = tqdm(total=len(futures_in_order), desc="  Extracting", unit="PDF", leave=False,
                                     bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}]')
 
-                for future in as_completed(future_to_pdf):
-                    pdf_path = future_to_pdf[future]
+                for future, pdf_path in futures_in_order:
                     try:
                         # Timeout after 10 minutes per PDF (handles very large PDFs up to ~3000 pages)
                         # At 0.2 sec/page, 3000 pages = 600 seconds = 10 minutes
