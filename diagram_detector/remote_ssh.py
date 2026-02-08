@@ -911,10 +911,14 @@ class SSHRemoteDetector:
 
             # Upload via parallel rsync
             upload_start = time.time()
-            files_to_upload = list(temp_path.glob("*"))
+
+            # CRITICAL FIX: Preserve image_paths order instead of using glob (which returns arbitrary filesystem order)
+            # Build files_to_upload in the same order as image_paths to prevent contamination
+            files_to_upload = [temp_path / img_path.name for img_path in image_paths
+                             if (temp_path / img_path.name).exists()]
             num_files = len(files_to_upload)
 
-            logger.debug(f"[UPLOAD] Starting parallel rsync upload of {num_files} files")
+            logger.debug(f"[UPLOAD] Starting parallel rsync upload of {num_files} files (order preserved from image_paths)")
 
             if num_files == 0:
                 logger.warning(f"No files to upload for batch {batch_id}")
