@@ -230,7 +230,8 @@ def deploy_to_remote(
     strict: bool = True,
     verbose: bool = True,
     deploy_models: bool = True,
-    force_model_download: bool = False
+    force_model_download: bool = False,
+    install_timeout: int = 600
 ) -> bool:
     """
     Deploy diagram-detector to remote server using git.
@@ -250,6 +251,7 @@ def deploy_to_remote(
         verbose: Print progress messages
         deploy_models: Also deploy model files
         force_model_download: Force download models from HuggingFace on remote
+        install_timeout: Timeout in seconds for pip install (default: 600 = 10 min)
 
     Returns:
         True if deployment successful
@@ -444,7 +446,13 @@ def deploy_to_remote(
         f".venv/bin/pip install -q --upgrade pip"
     ]
 
-    result = subprocess.run(venv_setup_cmd, capture_output=not verbose, text=True)
+    try:
+        result = subprocess.run(venv_setup_cmd, capture_output=not verbose, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print("✗ Virtual environment setup timed out (120s)")
+        return False
+
     if result.returncode != 0:
         if verbose:
             print("✗ Virtual environment setup failed")
@@ -458,7 +466,7 @@ def deploy_to_remote(
     # Install package in venv
     if verbose:
         print("\n6. Installing package...")
-        print("  (This may take a few minutes if dependencies need updating)")
+        print(f"  (This may take a few minutes if dependencies need updating, timeout: {install_timeout}s)")
 
     install_cmd = [
         "ssh", "-p", str(config.port),
@@ -466,7 +474,15 @@ def deploy_to_remote(
         f"cd {config.remote_work_dir} && .venv/bin/pip install -q -e ."
     ]
 
-    result = subprocess.run(install_cmd, capture_output=not verbose, text=True)
+    try:
+        result = subprocess.run(install_cmd, capture_output=not verbose, text=True, timeout=install_timeout)
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print(f"✗ Installation timed out after {install_timeout}s")
+            print("  This usually indicates a network issue or missing dependencies")
+            print("  Try: ssh to remote and run: cd ~/diagram-detector && .venv/bin/pip install -e . -v")
+        return False
+
     if result.returncode != 0:
         if verbose:
             print("✗ Installation failed")
