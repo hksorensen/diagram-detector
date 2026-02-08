@@ -97,6 +97,30 @@ def get_git_info(repo_dir: Path) -> Tuple[str, str, str, bool]:
     return commit_hash, branch_name, remote_url, has_uncommitted
 
 
+def get_commit_timestamp(repo_dir: Path, commit: str = "HEAD") -> str:
+    """
+    Get the timestamp of a git commit.
+
+    Args:
+        repo_dir: Path to git repository
+        commit: Commit ref (default: HEAD)
+
+    Returns:
+        Timestamp string in format "YYYY-MM-DD HH:MM:SS"
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M:%S", commit],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
 def check_local_git_status(repo_dir: Path, strict: bool = True) -> Tuple[str, str, str]:
     """
     Check local git repository status before deployment.
@@ -268,10 +292,11 @@ def deploy_to_remote(
         return False
 
     local_version = get_local_version()
+    commit_timestamp = get_commit_timestamp(repo_dir)
 
     if verbose:
         print(f"Local version:  {local_version}")
-        print(f"Git commit:     {commit_hash[:12]}")
+        print(f"Git commit:     {commit_hash[:12]} ({commit_timestamp})")
         print(f"Git branch:     {branch_name}")
         print(f"Git remote:     {remote_url}")
         print(f"Remote:         {config.user}@{config.host}:{config.port}")
@@ -388,13 +413,23 @@ def deploy_to_remote(
 
     if remote_commit != commit_hash:
         if verbose:
+            # Get timestamps for both commits
+            local_ts = get_commit_timestamp(repo_dir, commit_hash)
+            remote_ts_cmd = [
+                "ssh", "-p", str(config.port),
+                f"{config.user}@{config.host}",
+                f"cd ~/diagram-detector && git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S' {remote_commit}"
+            ]
+            remote_ts_result = subprocess.run(remote_ts_cmd, capture_output=True, text=True)
+            remote_ts = remote_ts_result.stdout.strip() if remote_ts_result.returncode == 0 else ""
+
             print(f"✗ Commit mismatch!")
-            print(f"  Local:  {commit_hash[:12]}")
-            print(f"  Remote: {remote_commit[:12]}")
+            print(f"  Local:  {commit_hash[:12]} ({local_ts})")
+            print(f"  Remote: {remote_commit[:12]} ({remote_ts})")
         return False
 
     if verbose:
-        print(f"✓ Commit matches: {commit_hash[:12]}")
+        print(f"✓ Commit matches: {commit_hash[:12]} ({commit_timestamp})")
 
     # Ensure virtual environment exists
     if verbose:
