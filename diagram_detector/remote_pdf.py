@@ -702,7 +702,6 @@ class PDFRemoteDetector:
             pdf_page_counts[pdf_name] = len(image_paths)
 
         if self.verbose:
-            print(f"  ✓ Extraction complete: {len(all_images)} pages in {extraction_time:.1f}s ({len(all_images)/extraction_time:.1f} pages/s)")
             print(f"  Running remote inference on {len(all_images)} images...")
 
         # Run remote inference on all images
