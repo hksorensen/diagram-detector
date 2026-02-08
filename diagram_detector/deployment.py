@@ -138,8 +138,19 @@ def check_local_git_status(repo_dir: Path, strict: bool = True) -> Tuple[str, st
     commit_hash, branch_name, remote_url, has_uncommitted = get_git_info(repo_dir)
 
     if has_uncommitted and strict:
+        # Get the actual list of uncommitted files
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True
+        )
+        uncommitted_files = result.stdout.strip()
+
         raise RuntimeError(
             "Cannot deploy with uncommitted changes!\n"
+            f"\nUncommitted files in {repo_dir}:\n"
+            f"{uncommitted_files}\n\n"
             "Please commit your changes first:\n"
             "  git add .\n"
             "  git commit -m 'Your message'\n"
