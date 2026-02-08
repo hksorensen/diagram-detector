@@ -879,10 +879,9 @@ class SSHRemoteDetector:
                     missing_files.append(img_path)
                 else:
                     try:
-                        # Use parent dir name (PDF identifier) to ensure unique filenames
-                        pdf_id = img_path.parent.name
-                        unique_name = f"{pdf_id}_{img_path.name}"
-                        shutil.copy2(img_path, temp_path / unique_name)
+                        # Image filenames already include PDF identifier (pdfname_page_XXXX.jpg)
+                        # No need to prepend parent dir name - would cause doubling
+                        shutil.copy2(img_path, temp_path / img_path.name)
                     except Exception as e:
                         copy_errors.append((img_path, str(e)))
 
