@@ -378,16 +378,18 @@ class PDFRemoteDetector:
             use_persistent_server=use_persistent_server,
         )
 
-        # Initialize cache with proper parameter tracking
-        self.cache = DetectionCache(cache_dir=cache_dir, compression=True)
+        # REMOTE CACHE DISABLED - Causing contamination issues
+        # Local cache (on client) is still active and sufficient
+        # Remote cache can be re-enabled later if needed for multi-machine setups
+        self.cache = None
 
-        if self.verbose:
-            cache_stats = self.cache.stats()
-            print(
-                f"Cache: {cache_stats['num_pdfs']} PDFs, "
-                f"{cache_stats['total_pages']:,} pages "
-                f"({cache_stats['size_mb']:.1f} MB compressed)"
-            )
+        # if self.verbose:
+        #     cache_stats = self.cache.stats()
+        #     print(
+        #         f"Cache: {cache_stats['num_pdfs']} PDFs, "
+        #         f"{cache_stats['total_pages']:,} pages "
+        #         f"({cache_stats['size_mb']:.1f} MB compressed)"
+        #     )
 
     def __enter__(self):
         """Context manager entry."""
@@ -918,14 +920,16 @@ class PDFRemoteDetector:
                 print("Checking cache...")
 
             for pdf_path in pdf_list:
-                cached = self.cache.get(
-                    pdf_path,
-                    model=self.model,
-                    confidence=self.confidence,
-                    iou=self.iou,
-                    dpi=self.dpi,
-                    imgsz=self.imgsz,
-                )
+                cached = None
+                if self.cache:
+                    cached = self.cache.get(
+                        pdf_path,
+                        model=self.model,
+                        confidence=self.confidence,
+                        iou=self.iou,
+                        dpi=self.dpi,
+                        imgsz=self.imgsz,
+                    )
                 if cached is not None:
                     # Convert cached dicts back to DetectionResult objects
                     cached_results[pdf_path.name] = [
@@ -1035,16 +1039,17 @@ class PDFRemoteDetector:
                             results_list = batch_results[pdf_path.name]
                             results_dicts = [asdict(r) for r in results_list]
 
-                            # cache.set() will now validate that results_dicts is not empty
-                            self.cache.set(
-                                pdf_path,
-                                model=self.model,
-                                confidence=self.confidence,
-                                iou=self.iou,
-                                dpi=self.dpi,
-                                imgsz=self.imgsz,
-                                results=results_dicts,
-                            )
+                            # Cache results (if cache enabled)
+                            if self.cache:
+                                self.cache.set(
+                                    pdf_path,
+                                    model=self.model,
+                                    confidence=self.confidence,
+                                    iou=self.iou,
+                                    dpi=self.dpi,
+                                    imgsz=self.imgsz,
+                                    results=results_dicts,
+                                )
 
                     # Add to results
                     all_results.update(batch_results)
@@ -1199,7 +1204,7 @@ class PDFRemoteDetector:
                 pct_high = len(high_diagram_pages) / len(diagram_counts) * 100
                 print(f"  Pages with >10 diagrams: {len(high_diagram_pages)} ({pct_high:.1f}%)")
 
-            if use_cache:
+            if use_cache and self.cache:
                 cache_stats = self.cache.stats()
                 num_pdfs = cache_stats["num_pdfs"]
                 size_mb = cache_stats["size_mb"]
@@ -1295,14 +1300,16 @@ class PDFRemoteDetector:
 
         results = {}
         for pdf_path in pdf_list:
-            cached = self.cache.get(
-                pdf_path,
-                model=self.model,
-                confidence=self.confidence,
-                iou=self.iou,
-                dpi=self.dpi,
-                imgsz=self.imgsz,
-            )
+            cached = None
+            if self.cache:
+                cached = self.cache.get(
+                    pdf_path,
+                    model=self.model,
+                    confidence=self.confidence,
+                    iou=self.iou,
+                    dpi=self.dpi,
+                    imgsz=self.imgsz,
+                )
 
             if cached is not None:
                 # Convert cached dicts back to DetectionResult objects
@@ -1316,6 +1323,10 @@ class PDFRemoteDetector:
 
     def clear_cache(self) -> None:
         """Clear cache."""
-        self.cache.clear()
-        if self.verbose:
-            print("✓ Cache cleared")
+        if self.cache:
+            self.cache.clear()
+            if self.verbose:
+                print("✓ Cache cleared")
+        else:
+            if self.verbose:
+                print("ℹ Cache is disabled")
