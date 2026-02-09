@@ -613,26 +613,45 @@ class PDFRemoteDetector:
         # PDFs can be in either published/ or arxiv/ subdirectories
         remote_pdf_paths = []
 
-        # Check which subdirectory each PDF is actually in
+        # Check subdirectory for all PDFs in a single SSH command (much faster than per-PDF)
         import subprocess
+
+        # Build a single command that checks all PDFs and outputs their subdirectory
+        check_commands = []
         for pdf in pdfs_on_remote:
-            # Check both locations on remote
-            check_cmd = [
-                "ssh", "-p", str(self.remote_detector.config.port),
-                f"{self.remote_detector.config.user}@{self.remote_detector.config.host}",
-                f"if [ -f {remote_pdf_base}/published/{pdf.name} ]; then echo 'published/{pdf.name}'; "
-                f"elif [ -f {remote_pdf_base}/arxiv/{pdf.name} ]; then echo 'arxiv/{pdf.name}'; "
+            # For each PDF, output "arxiv:filename" or "published:filename" if found
+            check_commands.append(
+                f"if [ -f {remote_pdf_base}/published/{pdf.name} ]; then "
+                f"echo 'published:{pdf.name}'; "
+                f"elif [ -f {remote_pdf_base}/arxiv/{pdf.name} ]; then "
+                f"echo 'arxiv:{pdf.name}'; "
                 f"fi"
-            ]
-            try:
-                result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=10)
-                subpath = result.stdout.strip()
-                if subpath:
-                    remote_pdf_paths.append(f"{remote_pdf_base}/{subpath}")
-                else:
+            )
+
+        combined_check = "; ".join(check_commands)
+        ssh_cmd = [
+            "ssh", "-p", str(self.remote_detector.config.port),
+            f"{self.remote_detector.config.user}@{self.remote_detector.config.host}",
+            combined_check
+        ]
+
+        try:
+            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+            # Parse output: each line is "subdir:filename"
+            for line in result.stdout.strip().split('\n'):
+                if line and ':' in line:
+                    subdir, filename = line.split(':', 1)
+                    remote_pdf_paths.append(f"{remote_pdf_base}/{subdir}/{filename}")
+
+            # Warn about PDFs that weren't found
+            found_names = {line.split(':', 1)[1] for line in result.stdout.strip().split('\n') if line and ':' in line}
+            for pdf in pdfs_on_remote:
+                if pdf.name not in found_names:
                     logger.warning(f"PDF not found in published/ or arxiv/: {pdf.name}")
-            except Exception as e:
-                logger.warning(f"Failed to check location for {pdf.name}: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to check PDF locations: {e}")
+            raise
 
         if not remote_pdf_paths:
             raise RuntimeError(f"No PDFs found on remote in {remote_pdf_base}/{{published,arxiv}}/")
