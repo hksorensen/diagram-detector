@@ -54,9 +54,9 @@ Invoked by ``SSHRemoteDetector`` over SSH::
     python -m diagram_detector.server --model v5 --confidence 0.1 --iou 0.3 ...
 """
 
+import json
 import os
 import sys
-import json
 from pathlib import Path
 
 
@@ -80,8 +80,8 @@ def main():
     # at fd 2 (stderr), and keep a dup of the original fd 1 for protocol
     # messages only.
     # ---------------------------------------------------------------------------
-    _proto_fd = os.dup(1)          # save the real stdout fd
-    os.dup2(2, 1)                  # fd 1 → stderr for the lifetime of the server
+    _proto_fd = os.dup(1)  # save the real stdout fd
+    os.dup2(2, 1)  # fd 1 → stderr for the lifetime of the server
     # sys.stdout now also writes to stderr — safe for any detector prints
 
     def _send(msg: str) -> None:
@@ -98,8 +98,8 @@ def main():
         batch_size=args.batch_size,
         imgsz=args.imgsz,
         tensorrt=args.tensorrt,
-        verbose=True,   # all output goes to stderr via fd 1
-        cache=False,    # caller manages caching; server is stateless between batches
+        verbose=True,  # all output goes to stderr via fd 1
+        cache=False,  # caller manages caching; server is stateless between batches
     )
 
     # Signal ready — caller blocks on this line
@@ -136,19 +136,28 @@ def main():
                 # Save results in the same JSON format cli.py uses
                 detector.save_results(results, output_dir, format="json")
 
-                _send(json.dumps({
-                    "status": "DONE",
-                    "output": str(output_dir),
-                    "num_results": len(results),
-                }))
+                _send(
+                    json.dumps(
+                        {
+                            "status": "DONE",
+                            "output": str(output_dir),
+                            "num_results": len(results),
+                        }
+                    )
+                )
 
             except Exception as e:
                 import traceback
+
                 traceback.print_exc(file=sys.stderr)
-                _send(json.dumps({
-                    "status": "ERROR",
-                    "error": str(e),
-                }))
+                _send(
+                    json.dumps(
+                        {
+                            "status": "ERROR",
+                            "error": str(e),
+                        }
+                    )
+                )
                 # Server stays alive — next batch can still be attempted
 
         elif cmd_type == "infer_pdfs":
@@ -161,18 +170,24 @@ def main():
             try:
                 # Extract PDFs to temporary directory on remote
                 import tempfile
+
                 from .remote_pdf import extract_pdf_to_jpegs
 
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_path = Path(temp_dir)
 
                     # Extract all PDFs to temp directory
+                    # CRITICAL: Each PDF gets its own subdirectory to prevent overwriting
                     for pdf_path in pdf_paths:
                         if not pdf_path.exists():
                             raise FileNotFoundError(f"PDF not found on remote: {pdf_path}")
 
-                        # Extract PDF to JPEG files
-                        image_paths = extract_pdf_to_jpegs(pdf_path, temp_path, dpi=200, show_progress=False)
+                        # Create subdirectory for this PDF (using PDF stem as folder name)
+                        pdf_output_dir = temp_path / pdf_path.stem
+                        pdf_output_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Extract PDF to JPEG files in its own subdirectory
+                        image_paths = extract_pdf_to_jpegs(pdf_path, pdf_output_dir, dpi=200, show_progress=False)
                         if not image_paths:
                             sys.stderr.write(f"Warning: No pages extracted from {pdf_path.name}\n")
 
@@ -182,20 +197,29 @@ def main():
                     # Save results
                     detector.save_results(results, output_dir, format="json")
 
-                    _send(json.dumps({
-                        "status": "DONE",
-                        "output": str(output_dir),
-                        "num_results": len(results),
-                        "pdfs_processed": len(pdf_paths),
-                    }))
+                    _send(
+                        json.dumps(
+                            {
+                                "status": "DONE",
+                                "output": str(output_dir),
+                                "num_results": len(results),
+                                "pdfs_processed": len(pdf_paths),
+                            }
+                        )
+                    )
 
             except Exception as e:
                 import traceback
+
                 traceback.print_exc(file=sys.stderr)
-                _send(json.dumps({
-                    "status": "ERROR",
-                    "error": str(e),
-                }))
+                _send(
+                    json.dumps(
+                        {
+                            "status": "ERROR",
+                            "error": str(e),
+                        }
+                    )
+                )
 
         else:
             _send(json.dumps({"status": "ERROR", "error": f"Unknown command type: {cmd_type}"}))
