@@ -838,38 +838,48 @@ class PDFRemoteDetector:
         print(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
         print(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
 
-        # Check if first images belong to first PDF
+        # Check if images are in correct order (grouped by PDF, matching pdf_batch order)
         if len(all_images) > 0 and len(pdf_batch) > 0:
-            first_pdf = pdf_batch[0].name
-            first_pdf_stem = pdf_batch[0].stem
-            first_images_ok = all(first_pdf_stem in img.name for img in all_images[:5])
+            # Build expected image sequence from first few PDFs
+            expected_sequence = []
+            for pdf_path in pdf_batch[:min(3, len(pdf_batch))]:  # Check first 3 PDFs (or fewer)
+                pdf_stem = pdf_path.stem
+                if pdf_path.name in pdf_page_counts:
+                    page_count = pdf_page_counts[pdf_path.name]
+                    for page_num in range(1, page_count + 1):
+                        expected_sequence.append(f"{pdf_stem}_page_{page_num:04d}.jpg")
+
+            # Compare expected vs actual
+            actual_sequence = [img.name for img in all_images[:len(expected_sequence)]]
+            images_in_correct_order = (expected_sequence == actual_sequence)
 
             # Log to contamination logger
             try:
                 from diagrams_in_arxiv.contamination_logger import log_checkpoint
-                checkpoint_status = "PASS" if first_images_ok else "FAIL"
-                expected_order = [f"{p.stem}_page_XXXX.jpg" for p in pdf_batch[:3]]
-                actual_order = [p.name for p in all_images[:20]]
+                checkpoint_status = "PASS" if images_in_correct_order else "FAIL"
+                # For logging, show pattern not full sequence
+                expected_summary = [f"{p.stem}_page_*" for p in pdf_batch[:3]]
+                actual_summary = [p.name for p in all_images[:min(20, len(all_images))]]
                 log_checkpoint(
                     checkpoint=f"CHECKPOINT 3 (REMOTE batch {batch_id})",
                     status=checkpoint_status,
-                    expected=expected_order,
-                    actual=actual_order,
-                    details=f"After building all_images (remote path), batch {batch_id}, first_pdf={first_pdf}"
+                    expected=expected_summary,
+                    actual=actual_summary,
+                    details=f"After building all_images (remote path), batch {batch_id}, checked {len(expected_sequence)} images"
                 )
             except ImportError:
                 pass  # Contamination logger not available
 
-            if first_images_ok:
-                print(f"  ✓ First images belong to first PDF ({first_pdf})!")
-                logger.error(f"  ✓ First images belong to first PDF ({first_pdf})!")
+            if images_in_correct_order:
+                print(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
+                logger.error(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
             else:
                 print(f"  ✗ IMAGE ORDER MISMATCH!")
-                print(f"    First PDF: {first_pdf}")
-                print(f"    First images: {[p.name for p in all_images[:5]]}")
+                print(f"    Expected: {expected_sequence[:10]}")
+                print(f"    Actual:   {actual_sequence[:10]}")
                 logger.error(f"  ✗ IMAGE ORDER MISMATCH!")
-                logger.error(f"    First PDF: {first_pdf}")
-                logger.error(f"    First images: {[p.name for p in all_images[:5]]}")
+                logger.error(f"    Expected: {expected_sequence[:10]}")
+                logger.error(f"    Actual:   {actual_sequence[:10]}")
         print("="*70 + "\n")
 
         if self.verbose:
