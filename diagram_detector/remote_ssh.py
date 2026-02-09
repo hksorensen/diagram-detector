@@ -892,6 +892,83 @@ class SSHRemoteDetector:
         if self.verbose:
             print("✓ Remote workspace ready")
 
+    def _upload_pdfs(self, pdf_paths: List[Path], remote_pdf_dir: str = "~/diagrams_in_arxiv/pdfs") -> List[str]:
+        """
+        Upload PDF files to remote storage.
+
+        Args:
+            pdf_paths: List of local PDF paths to upload
+            remote_pdf_dir: Base directory on remote for PDF storage
+
+        Returns:
+            List of remote PDF paths (full paths on remote)
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if not pdf_paths:
+            return []
+
+        if self.verbose:
+            print(f"  Uploading {len(pdf_paths)} PDFs to remote storage...")
+
+        remote_paths = []
+
+        # Group PDFs by type (arxiv vs published) based on their source directory
+        arxiv_pdfs = []
+        published_pdfs = []
+
+        for pdf_path in pdf_paths:
+            # Determine if arxiv or published based on parent directory name
+            if 'arxiv' in str(pdf_path.parent).lower():
+                arxiv_pdfs.append(pdf_path)
+            else:
+                published_pdfs.append(pdf_path)
+
+        # Upload arxiv PDFs
+        if arxiv_pdfs:
+            remote_arxiv_dir = f"{remote_pdf_dir}/arxiv"
+            self._run_ssh_command(f"mkdir -p {remote_arxiv_dir}")
+
+            for pdf_path in arxiv_pdfs:
+                remote_path = f"{remote_arxiv_dir}/{pdf_path.name}"
+                # Use rsync for efficient upload (skip if already exists and same size)
+                rsync_cmd = [
+                    "rsync", "-az", "--partial",
+                    str(pdf_path),
+                    f"{self.config.user}@{self.config.host}:{remote_path}"
+                ] + self.config.get_rsync_ssh_args(self._ssh_control_path)
+
+                result = subprocess.run(rsync_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.warning(f"Failed to upload {pdf_path.name}: {result.stderr}")
+                else:
+                    remote_paths.append(remote_path)
+
+        # Upload published PDFs
+        if published_pdfs:
+            remote_published_dir = f"{remote_pdf_dir}/published"
+            self._run_ssh_command(f"mkdir -p {remote_published_dir}")
+
+            for pdf_path in published_pdfs:
+                remote_path = f"{remote_published_dir}/{pdf_path.name}"
+                rsync_cmd = [
+                    "rsync", "-az", "--partial",
+                    str(pdf_path),
+                    f"{self.config.user}@{self.config.host}:{remote_path}"
+                ] + self.config.get_rsync_ssh_args(self._ssh_control_path)
+
+                result = subprocess.run(rsync_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.warning(f"Failed to upload {pdf_path.name}: {result.stderr}")
+                else:
+                    remote_paths.append(remote_path)
+
+        if self.verbose:
+            print(f"  ✓ Uploaded {len(remote_paths)}/{len(pdf_paths)} PDFs")
+
+        return remote_paths
+
     def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
         """Upload batch of images via SFTP (with progress bar) or rsync (fallback)."""
         import logging
@@ -1515,6 +1592,56 @@ class SSHRemoteDetector:
 
         if self.verbose:
             print(f"  ✓ Batch {batch_id} processed (persistent server, {num_images} images)")
+
+    def _run_inference_pdfs(self, pdf_paths: List[str], batch_id: str) -> None:
+        """
+        Run inference on PDFs using persistent server's infer_pdfs command.
+
+        PDFs must already be on remote filesystem.
+
+        Args:
+            pdf_paths: List of full remote PDF paths (e.g., "~/diagrams_in_arxiv/pdfs/arxiv/file.pdf")
+            batch_id: Batch identifier for output directory
+        """
+        if not self._server_proc:
+            raise RuntimeError("Persistent server not running")
+
+        if self.verbose:
+            print(f"  Running inference on {len(pdf_paths)} PDFs on remote...")
+
+        output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"
+
+        cmd = json.dumps({"type": "infer_pdfs", "pdfs": pdf_paths, "output": output_dir})
+        self._server_proc.stdin.write(cmd + "\n")
+        self._server_proc.stdin.flush()
+
+        # Wait for response
+        while True:
+            response_line = self._server_proc.stdout.readline().strip()
+            if not response_line:
+                self._server_proc.wait()
+                self._server_proc = None
+                raise RuntimeError(
+                    f"Persistent server died during PDF inference (batch {batch_id})"
+                )
+            try:
+                response = json.loads(response_line)
+                break
+            except json.JSONDecodeError:
+                if self.verbose:
+                    print(f"  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
+
+        if response["status"] == "ERROR":
+            raise RuntimeError(
+                f"Persistent server error on PDF batch {batch_id}: {response['error']}"
+            )
+
+        if response["status"] != "DONE":
+            raise RuntimeError(f"Unexpected response from persistent server: {response}")
+
+        if self.verbose:
+            num_pdfs = response.get("pdfs_processed", len(pdf_paths))
+            print(f"  ✓ Batch {batch_id} processed ({num_pdfs} PDFs on remote)")
 
     def _stop_persistent_server(self) -> None:
         """Send shutdown command and wait for the server process to exit."""
