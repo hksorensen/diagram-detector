@@ -1544,9 +1544,9 @@ class SSHRemoteDetector:
         elif isinstance(input_path, (str, Path)):
             input_path = Path(input_path)
             if input_path.is_dir():
-                # CRITICAL: Don't sort! Images are already in carefully maintained order
-                # from remote_pdf.py extraction/upload. Sorting would break the ordering.
-                image_paths = get_image_files(input_path, sort=False)
+                # get_image_files() returns filesystem order (no sorting)
+                # This preserves the carefully maintained priority_list order from rsync upload
+                image_paths = get_image_files(input_path)
             else:
                 image_paths = [input_path]
         else:

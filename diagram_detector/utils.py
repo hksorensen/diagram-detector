@@ -716,43 +716,36 @@ def validate_model_file(model_path: Path) -> bool:
         return False
 
 
-def get_image_files(directory: Path, recursive: bool = False, sort: bool = True) -> List[Path]:
+def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
     """
     Get all image files in directory.
 
     Args:
         directory: Directory to search
         recursive: Search recursively
-        sort: Sort files alphabetically (default True). Set False to preserve filesystem order,
-              which is important when files are already in a carefully maintained sequence.
 
     Returns:
-        List of image file paths
+        List of image file paths in filesystem order (no sorting applied).
+        For remote inference, this preserves the upload order from rsync.
+        For standalone use, order doesn't matter as each image is independent.
     """
     import logging
     logger = logging.getLogger(__name__)
-    logger.debug(f"[DIAGNOSTIC] get_image_files: Scanning {directory}, sort={sort}")
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Scanning {directory}")
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
+    files = []
     if recursive:
-        files = []
         for ext in image_extensions:
             files.extend(directory.rglob(f"*{ext}"))
             files.extend(directory.rglob(f"*{ext.upper()}"))
     else:
-        files = []
         for ext in image_extensions:
             files.extend(directory.glob(f"*{ext}"))
             files.extend(directory.glob(f"*{ext.upper()}"))
 
-    if sort:
-        files_result = sorted(files)
-        logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files_result)} image files (sorted)")
-    else:
-        files_result = files
-        logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files_result)} image files (unsorted, filesystem order)")
-
-    if files_result:
-        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files_result[:3]]}")
-        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files_result[-3:]]}")
-    return files_result
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files)} image files (filesystem order)")
+    if files:
+        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files[:3]]}")
+        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files[-3:]]}")
+    return files
