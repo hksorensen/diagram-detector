@@ -407,21 +407,32 @@ class PDFRemoteDetector:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - cleanup SSH resources."""
-        self.cleanup()
+        """Context manager exit - cleanup SSH resources.
+
+        Stops persistent server if exiting due to exception,
+        otherwise keeps it alive for reuse across batches.
+        """
+        # Stop server if there was an exception
+        stop_server = exc_type is not None
+        self.cleanup(stop_server=stop_server)
         return False
 
     def __del__(self):
         """Destructor - cleanup SSH resources as safety net."""
         try:
-            self.cleanup()
+            # Always stop server when object is destroyed
+            self.cleanup(stop_server=True)
         except Exception:
             pass  # Ignore errors during destruction
 
-    def cleanup(self):
-        """Clean up SSH control socket and connections."""
+    def cleanup(self, stop_server: bool = False):
+        """Clean up SSH control socket and connections.
+
+        Args:
+            stop_server: If True, also stop the persistent server.
+        """
         if hasattr(self, "remote_detector") and self.remote_detector:
-            self.remote_detector.cleanup()
+            self.remote_detector.cleanup(stop_server=stop_server)
 
     def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
         """Extract PDF pages to images locally (delegates to shared helper)."""
