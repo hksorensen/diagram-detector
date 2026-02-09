@@ -1149,7 +1149,7 @@ class SSHRemoteDetector:
                 logger.info(f"[UPLOAD] Syncing filesystem...")
                 self._run_ssh_command(f"sync", check=False)
                 time.sleep(0.5)  # 500ms delay for filesystem to settle
-                logger.info(f"[UPLOAD] ✓ Verification passed: all {remote_count} files present with correct sizes")
+                logger.info(f"[UPLOAD] ✓ Verification passed: all {len(image_paths)} images uploaded (+ manifest.txt)")
             else:
                 logger.error(f"[UPLOAD] Failed to verify upload - ls command failed")
                 logger.error(f"  Return code: {result.returncode}")
