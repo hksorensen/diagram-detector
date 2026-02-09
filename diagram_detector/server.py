@@ -161,7 +161,7 @@ def main():
             try:
                 # Extract PDFs to temporary directory on remote
                 import tempfile
-                from .utils import convert_pdf_to_images
+                from .remote_pdf import extract_pdf_to_jpegs
 
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_path = Path(temp_dir)
@@ -171,8 +171,8 @@ def main():
                         if not pdf_path.exists():
                             raise FileNotFoundError(f"PDF not found on remote: {pdf_path}")
 
-                        # Extract PDF to images
-                        image_paths = convert_pdf_to_images(pdf_path, temp_path, dpi=200)
+                        # Extract PDF to JPEG files
+                        image_paths = extract_pdf_to_jpegs(pdf_path, temp_path, dpi=200, show_progress=False)
                         if not image_paths:
                             sys.stderr.write(f"Warning: No pages extracted from {pdf_path.name}\n")
 
