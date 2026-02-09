@@ -410,7 +410,30 @@ class DiagramDetector:
         if isinstance(input_path, list):
             image_paths = [Path(p) for p in input_path]
         elif input_path.is_dir():
-            image_paths = get_image_files(input_path)
+            # Check for manifest file in directory (explicit ordering)
+            manifest_path = input_path / "manifest.txt"
+            if manifest_path.exists():
+                print(f"[DEBUG] detect(): Found manifest file - using EXPLICIT ordering (priority_list preserved!)", flush=True)
+                image_paths = []
+                with open(manifest_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            # Manifest contains filenames only, resolve relative to directory
+                            img_path = input_path / line
+                            if img_path.exists():
+                                image_paths.append(img_path)
+                            else:
+                                print(f"[WARNING] Manifest references missing file: {line}", flush=True)
+                print(f"[DEBUG] detect(): Loaded {len(image_paths)} images from manifest", flush=True)
+                if len(image_paths) >= 3:
+                    print(f"[DEBUG]   Manifest order first 3: {[p.name for p in image_paths[:3]]}", flush=True)
+                    print(f"[DEBUG]   Manifest order last 3: {[p.name for p in image_paths[-3:]]}", flush=True)
+            else:
+                # No manifest - fall back to directory scan
+                print(f"[DEBUG] detect(): No manifest found, scanning directory", flush=True)
+                image_paths = get_image_files(input_path)
+
             if not image_paths:
                 raise ValueError(f"No images found in {input_path}")
         else:

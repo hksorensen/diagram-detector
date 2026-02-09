@@ -942,6 +942,24 @@ class SSHRemoteDetector:
             temp_files = list(temp_path.glob("*.jpg")) + list(temp_path.glob("*.png"))
             logger.debug(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
 
+            # Create manifest file with explicit ordering
+            # This ensures remote detector processes images in the exact order of image_paths
+            manifest_path = temp_path / "manifest.txt"
+            with open(manifest_path, 'w') as f:
+                f.write("# Image processing manifest - explicit ordering\n")
+                f.write(f"# Batch: {batch_id}\n")
+                f.write(f"# Images: {len(image_paths)}\n")
+                f.write("#\n")
+                for img_path in image_paths:
+                    # Write filename only (relative to directory)
+                    # Only include files that actually exist in temp dir
+                    if (temp_path / img_path.name).exists():
+                        f.write(f"{img_path.name}\n")
+
+            logger.info(f"[UPLOAD] Created manifest.txt with {len(image_paths)} images in priority_list order")
+            logger.debug(f"[UPLOAD]   Manifest first 3: {[p.name for p in image_paths[:3]]}")
+            logger.debug(f"[UPLOAD]   Manifest last 3: {[p.name for p in image_paths[-3:]]}")
+
             # Clear remote input directory before upload to avoid accumulation
             remote_input = f"{self.config.remote_work_dir}/input/{batch_id}/"
             cleanup_cmd = f"rm -rf {remote_input} && mkdir -p {remote_input}"
@@ -954,6 +972,10 @@ class SSHRemoteDetector:
             # Build files_to_upload in the same order as image_paths to prevent contamination
             files_to_upload = [temp_path / img_path.name for img_path in image_paths
                              if (temp_path / img_path.name).exists()]
+
+            # Add manifest file to upload (must be uploaded for remote to use explicit ordering)
+            files_to_upload.insert(0, manifest_path)  # Insert at beginning so it's uploaded first
+
             num_files = len(files_to_upload)
 
             logger.debug(f"[UPLOAD] Starting parallel rsync upload of {num_files} files (order preserved from image_paths)")
