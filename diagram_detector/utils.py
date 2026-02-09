@@ -770,12 +770,15 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
             files.extend(directory.glob(f"*{ext}"))
             files.extend(directory.glob(f"*{ext.upper()}"))
 
-    # Sort by (pdf_stem, page_number) for deterministic ordering
-    files_sorted = sorted(files, key=_extract_page_sort_key)
+    # CRITICAL: Do NOT sort! Filesystem order must be preserved.
+    # The upload process (rsync with sequential single-threaded upload) ensures
+    # that files are written in priority_list order. Filesystem directory entry
+    # order then preserves this sequence. Sorting alphabetically would scramble
+    # the carefully maintained priority_list order.
 
-    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files_sorted)} image files (sorted by pdf_stem, page_num)")
-    if files_sorted:
-        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files_sorted[:3]]}")
-        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files_sorted[-3:]]}")
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files)} image files (UNSORTED - preserving upload/filesystem order)")
+    if files:
+        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files[:3]]}")
+        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files[-3:]]}")
 
-    return files_sorted
+    return files

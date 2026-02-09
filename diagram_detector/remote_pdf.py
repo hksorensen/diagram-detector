@@ -23,6 +23,7 @@ from .models import DetectionResult
 from .utils import convert_pdf_to_images, save_json
 from .remote_ssh import RemoteConfig, SSHRemoteDetector
 from .cache import DetectionCache
+from .diagnostic_logger import diagnostic
 
 
 def _append_timing_to_csv(
@@ -664,18 +665,15 @@ class PDFRemoteDetector:
         # ═══════════════════════════════════════════════════════════════════
         # CHECKPOINT 2: Verify extraction preserved pdf_batch order
         # ═══════════════════════════════════════════════════════════════════
-        print("\n" + "="*70)
-        print(f"CHECKPOINT 2: After extraction (batch {batch_id})")
-        print("="*70)
-        logger.error(f"CHECKPOINT 2: After extraction (batch {batch_id})")
+        diagnostic.info("="*70)
+        diagnostic.info(f"CHECKPOINT 2: After extraction (batch {batch_id})")
+        diagnostic.info("="*70)
 
         pdf_images_order = [name for name in pdf_images.keys()]
         pdf_batch_order = [p.name for p in pdf_batch if p.name in pdf_images]
 
-        logger.error(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
-        logger.error(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
-        print(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
-        print(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
+        diagnostic.info(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
+        diagnostic.info(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
 
         # Log to contamination logger
         try:
@@ -692,15 +690,14 @@ class PDFRemoteDetector:
             pass  # Contamination logger not available in diagram_detector package
 
         if pdf_images_order != pdf_batch_order:
-            print(f"  ✗ ORDER MISMATCH at checkpoint 2!")
-            logger.error(f"  ✗ ORDER MISMATCH at checkpoint 2!")
-            logger.error(f"")
-            logger.error(f"{'═' * 70}")
-            logger.error(f"ORDER MISMATCH DETECTED - ROOT CAUSE OF CONTAMINATION!")
-            logger.error(f"{'═' * 70}")
-            logger.error(f"pdf_images dict order: {pdf_images_order[:5]}")
-            logger.error(f"pdf_batch list order:  {pdf_batch_order[:5]}")
-            logger.error(f"")
+            diagnostic.error(f"  ✗ ORDER MISMATCH at checkpoint 2!")
+            diagnostic.error("")
+            diagnostic.error("="*70)
+            diagnostic.error("ORDER MISMATCH DETECTED - ROOT CAUSE OF CONTAMINATION!")
+            diagnostic.error("="*70)
+            diagnostic.error(f"pdf_images dict order: {pdf_images_order[:5]}")
+            diagnostic.error(f"pdf_batch list order:  {pdf_batch_order[:5]}")
+            diagnostic.error("")
             logger.error(f"This will cause results to be assigned to wrong PDFs!")
             logger.error(f"all_images will be built in pdf_images order,")
             logger.error(f"but results will be sliced in pdf_batch order.")
@@ -833,13 +830,11 @@ class PDFRemoteDetector:
         # CHECKPOINT 3: Verify all_images list built in correct order
         # ═══════════════════════════════════════════════════════════════════
         print("\n" + "="*70)
-        print(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
-        print("="*70)
-        logger.error(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
-        logger.error(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
-        logger.error(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
-        print(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
-        print(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
+        diagnostic.info("="*70)
+        diagnostic.info(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
+        diagnostic.info("="*70)
+        diagnostic.info(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
+        diagnostic.info(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
 
         # Check if images are in correct order (grouped by PDF, matching pdf_batch order)
         if len(all_images) > 0 and len(pdf_batch) > 0:
@@ -874,15 +869,11 @@ class PDFRemoteDetector:
                 pass  # Contamination logger not available
 
             if images_in_correct_order:
-                print(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
-                logger.error(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
+                diagnostic.info(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
             else:
-                print(f"  ✗ IMAGE ORDER MISMATCH!")
-                print(f"    Expected: {expected_sequence[:10]}")
-                print(f"    Actual:   {actual_sequence[:10]}")
-                logger.error(f"  ✗ IMAGE ORDER MISMATCH!")
-                logger.error(f"    Expected: {expected_sequence[:10]}")
-                logger.error(f"    Actual:   {actual_sequence[:10]}")
+                diagnostic.error(f"  ✗ IMAGE ORDER MISMATCH!")
+                diagnostic.error(f"    Expected: {expected_sequence[:10]}")
+                diagnostic.error(f"    Actual:   {actual_sequence[:10]}")
         print("="*70 + "\n")
 
         if self.verbose:
