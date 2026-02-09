@@ -609,14 +609,35 @@ class PDFRemoteDetector:
 
         start_time = time.time()
 
-        # Build full remote PDF paths
+        # Build full remote PDF paths - need to check which subdirectory each PDF is in
         # PDFs can be in either published/ or arxiv/ subdirectories
         remote_pdf_paths = []
-        for pdf in pdfs_on_remote:
-            # Try published/ first, then arxiv/
-            remote_pdf_paths.append(f"{remote_pdf_base}/published/{pdf.name}")
 
-        logger.info(f"Processing {len(pdfs_on_remote)} PDFs directly on remote (no upload needed)")
+        # Check which subdirectory each PDF is actually in
+        import subprocess
+        for pdf in pdfs_on_remote:
+            # Check both locations on remote
+            check_cmd = [
+                "ssh", "-p", str(self.remote_detector.config.ssh_port),
+                f"{self.remote_detector.config.ssh_user}@{self.remote_detector.config.ssh_host}",
+                f"if [ -f {remote_pdf_base}/published/{pdf.name} ]; then echo 'published/{pdf.name}'; "
+                f"elif [ -f {remote_pdf_base}/arxiv/{pdf.name} ]; then echo 'arxiv/{pdf.name}'; "
+                f"fi"
+            ]
+            try:
+                result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=10)
+                subpath = result.stdout.strip()
+                if subpath:
+                    remote_pdf_paths.append(f"{remote_pdf_base}/{subpath}")
+                else:
+                    logger.warning(f"PDF not found in published/ or arxiv/: {pdf.name}")
+            except Exception as e:
+                logger.warning(f"Failed to check location for {pdf.name}: {e}")
+
+        if not remote_pdf_paths:
+            raise RuntimeError(f"No PDFs found on remote in {remote_pdf_base}/{{published,arxiv}}/")
+
+        logger.info(f"Processing {len(remote_pdf_paths)} PDFs directly on remote (no upload needed)")
 
         # Start persistent server if not running
         if not self.remote_detector._server_proc:
