@@ -572,6 +572,96 @@ class PDFRemoteDetector:
 
         return pdf_images, extraction_time
 
+    def _process_remote_pdfs(
+        self,
+        pdfs_on_remote: List[Path],
+        remote_pdf_base: str,
+        batch_id: str,
+        gpu_batch_size: int = 32
+    ) -> tuple[Dict[str, List[DetectionResult]], float]:
+        """
+        Process PDFs that are already on remote server.
+
+        Uses the server's infer_pdfs command to extract and detect PDFs
+        directly on remote, avoiding local extraction and upload.
+
+        Args:
+            pdfs_on_remote: List of PDF paths (local paths, filenames used for remote lookup)
+            remote_pdf_base: Base directory for PDFs on remote (e.g., ~/diagrams_in_arxiv/pdfs)
+            batch_id: Batch identifier for logging
+            gpu_batch_size: GPU inference batch size
+
+        Returns:
+            Tuple of (results_dict, processing_time)
+            results_dict: {pdf_filename: [DetectionResult, ...]}
+        """
+        import json
+        import time
+
+        start_time = time.time()
+
+        # Build full remote PDF paths
+        # PDFs can be in either published/ or arxiv/ subdirectories
+        remote_pdf_paths = []
+        for pdf in pdfs_on_remote:
+            # Try both locations - server will check which exists
+            remote_pdf_paths.append(f"{remote_pdf_base}/published/{pdf.name}")
+            # Fallback handled by server
+
+        # Create output directory for results
+        output_dir = self.work_dir / f"remote_results_{batch_id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Send infer_pdfs command to server
+        cmd = {
+            "type": "infer_pdfs",
+            "pdfs": remote_pdf_paths,
+            "output": str(output_dir)
+        }
+
+        logger.debug(f"Sending infer_pdfs command for {len(pdfs_on_remote)} PDFs")
+        self._send_command(json.dumps(cmd))
+
+        # Wait for response
+        response_line = self.process.stdout.readline()
+        if not response_line:
+            raise RuntimeError("Server closed connection while processing remote PDFs")
+
+        response = json.loads(response_line)
+
+        if response.get("status") != "DONE":
+            error_msg = response.get("error", "Unknown error")
+            raise RuntimeError(f"Remote PDF processing failed: {error_msg}")
+
+        # Load results from output directory
+        results_dict = {}
+        results_dir = Path(response["output"])
+
+        for pdf in pdfs_on_remote:
+            result_file = results_dir / f"{pdf.stem}.json"
+            if result_file.exists():
+                with open(result_file) as f:
+                    result_data = json.load(f)
+                    # Convert to DetectionResult objects
+                    from .models import DetectionResult, DiagramDetection
+                    results = [
+                        DetectionResult(
+                            filename=r["filename"],
+                            page_number=r["page_number"],
+                            detections=[
+                                DiagramDetection(**det) for det in r.get("detections", [])
+                            ]
+                        )
+                        for r in result_data
+                    ]
+                    results_dict[pdf.name] = results
+            else:
+                logger.warning(f"No results found for {pdf.name}")
+                results_dict[pdf.name] = []
+
+        processing_time = time.time() - start_time
+        return results_dict, processing_time
+
     def _process_pdf_batch(
         self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
         auto_git_commit: bool = False, gpu_batch_size: int = 32,
@@ -651,10 +741,25 @@ class PDFRemoteDetector:
             pdf_images = {}
             extraction_time = 0.0
 
-        # TODO: For PDFs already on remote, implement remote-side extraction
-        # Currently this feature is incomplete - all PDFs are extracted locally
+        # Process PDFs that are already on remote (extract and detect remotely)
+        remote_results = {}
         if pdfs_on_remote:
-            logger.debug(f"Note: {len(pdfs_on_remote)} PDFs are on remote but will be extracted locally (remote extraction not yet implemented)")
+            logger.info(f"Processing {len(pdfs_on_remote)} PDFs directly on remote (skip extraction+upload)")
+            try:
+                remote_results, remote_time = self._process_remote_pdfs(
+                    pdfs_on_remote,
+                    remote_pdf_base,
+                    batch_id,
+                    gpu_batch_size
+                )
+                logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
+            except Exception as e:
+                logger.error(f"Remote PDF processing failed: {e}")
+                logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote)} PDFs")
+                # Fall back to local extraction
+                fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote, batch_dir)
+                pdf_images.update(fallback_images)
+                extraction_time += fallback_time
 
         # Flatten to all images
         all_images = []
