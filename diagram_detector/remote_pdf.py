@@ -795,14 +795,24 @@ class PDFRemoteDetector:
 
         if self.pdfs_on_remote:
             # PDFs stored on remote via storage backend - check which ones exist
-            # Use $HOME instead of ~ for reliable shell expansion in SSH commands
-            remote_pdf_base = "$HOME/diagrams_in_arxiv/pdfs"
-            # Split batch into PDFs on remote vs need extraction
+            # Get expanded absolute path from remote (can't use ~ or $HOME with persistent server)
+            import subprocess
+
             if self.verbose:
                 print("  Checking which PDFs are already on remote...")
 
+            # Expand path on remote to get absolute path
+            ssh_cmd = (
+                ["ssh"]
+                + self.remote_detector.config.ssh_port_args
+                + [self.remote_detector.config.ssh_target, "echo $HOME/diagrams_in_arxiv/pdfs"]
+            )
+            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=5)
+            remote_pdf_base = result.stdout.strip()
+            if not remote_pdf_base or result.returncode != 0:
+                raise RuntimeError(f"Failed to get remote PDF base path: {result.stderr}")
+
             # Check all PDFs in batch efficiently with one SSH call
-            import subprocess
 
             check_commands = []
             for pdf in pdf_batch:
