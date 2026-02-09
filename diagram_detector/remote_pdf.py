@@ -604,6 +604,7 @@ class PDFRemoteDetector:
         import json
         import time
         import logging
+        import subprocess
         logger = logging.getLogger(__name__)
 
         start_time = time.time()
@@ -612,41 +613,42 @@ class PDFRemoteDetector:
         # PDFs can be in either published/ or arxiv/ subdirectories
         remote_pdf_paths = []
         for pdf in pdfs_on_remote:
-            # Try both locations - server will check which exists
+            # Try published/ first, then arxiv/
             remote_pdf_paths.append(f"{remote_pdf_base}/published/{pdf.name}")
-            # Fallback handled by server
 
-        # Create output directory for results
-        output_dir = self.work_dir / f"remote_results_{batch_id}"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Processing {len(pdfs_on_remote)} PDFs directly on remote (no upload needed)")
 
-        # Send infer_pdfs command to server
-        cmd = {
-            "type": "infer_pdfs",
-            "pdfs": remote_pdf_paths,
-            "output": str(output_dir)
-        }
+        # Start persistent server if not running
+        if not self.remote_detector._server_proc:
+            self.remote_detector._start_persistent_server()
 
-        logger.debug(f"Sending infer_pdfs command for {len(pdfs_on_remote)} PDFs")
-        self._send_command(json.dumps(cmd))
+        # Run inference using SSHRemoteDetector's infrastructure
+        self.remote_detector._run_inference_pdfs(remote_pdf_paths, batch_id)
 
-        # Wait for response
-        response_line = self.process.stdout.readline()
-        if not response_line:
-            raise RuntimeError("Server closed connection while processing remote PDFs")
+        # Download results from remote
+        remote_output_dir = f"{self.remote_detector.config.remote_work_dir}/output/{batch_id}"
+        local_output_dir = self.work_dir / f"remote_results_{batch_id}"
+        local_output_dir.mkdir(parents=True, exist_ok=True)
 
-        response = json.loads(response_line)
+        # Download results directory
+        rsync_cmd = [
+            "rsync", "-avz", "--timeout=300",
+            "-e", f"ssh -p {self.remote_detector.config.ssh_port} -o ConnectTimeout=10 -o ServerAliveInterval=60",
+            f"{self.remote_detector.config.ssh_target}:{remote_output_dir}/",
+            str(local_output_dir) + "/"
+        ]
 
-        if response.get("status") != "DONE":
-            error_msg = response.get("error", "Unknown error")
-            raise RuntimeError(f"Remote PDF processing failed: {error_msg}")
+        logger.debug(f"Downloading results from {remote_output_dir}")
+        result = subprocess.run(rsync_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to download remote results: {result.stderr}")
 
-        # Load results from output directory
+        # Parse results from downloaded files
         results_dict = {}
-        results_dir = Path(response["output"])
-
         for pdf in pdfs_on_remote:
-            result_file = results_dir / f"{pdf.stem}.json"
+            # Results should be in JSON format
+            result_file = local_output_dir / f"{pdf.stem}.json"
+
             if result_file.exists():
                 with open(result_file) as f:
                     result_data = json.load(f)
@@ -668,6 +670,7 @@ class PDFRemoteDetector:
                 results_dict[pdf.name] = []
 
         processing_time = time.time() - start_time
+        logger.info(f"✓ Remote PDF processing complete: {processing_time:.1f}s for {len(pdfs_on_remote)} PDFs")
         return results_dict, processing_time
 
     def _process_pdf_batch(
