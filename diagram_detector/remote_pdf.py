@@ -587,6 +587,7 @@ class PDFRemoteDetector:
                       batch_failed dict mapping pdf_name to failure status)
         """
         import logging
+        import os
         logger = logging.getLogger(__name__)
 
         batch_dir = work_dir / batch_id
@@ -595,20 +596,101 @@ class PDFRemoteDetector:
         # Track failures: {pdf_name: status} for PDFs that did not produce results
         batch_failed: Dict[str, str] = {}
 
-        # Extract all PDFs in batch (parallel if enabled)
-        pdf_images, extraction_time = self._extract_pdfs_parallel(pdf_batch, batch_dir)
+        # Check if PDFs are already on remote (optimization to skip extraction+upload)
+        remote_pdf_base = os.environ.get('REMOTE_PDF_BASE_DIR')
+        pdfs_on_remote = []
+        pdfs_need_extraction = []
+
+        if remote_pdf_base:
+            # Split batch into PDFs on remote vs need extraction
+            if self.verbose:
+                print(f"  Checking which PDFs are already on remote...")
+
+            # Check all PDFs in batch efficiently with one SSH call
+            import subprocess
+            check_commands = []
+            for pdf in pdf_batch:
+                check_commands.append(f"([ -f {remote_pdf_base}/published/{pdf.name} ] || [ -f {remote_pdf_base}/arxiv/{pdf.name} ]) && echo '{pdf.name}' || true")
+
+            combined_check = " && ".join(check_commands)
+            ssh_cmd = [
+                "ssh", "-p", str(self.config.port),
+                f"{self.config.user}@{self.config.host}",
+                combined_check
+            ]
+
+            try:
+                result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+                found_names = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+
+                for pdf in pdf_batch:
+                    if pdf.name in found_names:
+                        pdfs_on_remote.append(pdf)
+                    else:
+                        pdfs_need_extraction.append(pdf)
+
+                if self.verbose and pdfs_on_remote:
+                    saved_pct = 100 * len(pdfs_on_remote) / len(pdf_batch)
+                    print(f"  ✓ {len(pdfs_on_remote)}/{len(pdf_batch)} PDFs already on remote ({saved_pct:.0f}% skip extraction+upload)")
+
+            except (subprocess.TimeoutExpired, Exception) as e:
+                logger.warning(f"Failed to check remote PDFs: {e}, will extract all locally")
+                pdfs_need_extraction = pdf_batch
+        else:
+            # No remote PDF optimization, extract all
+            pdfs_need_extraction = pdf_batch
+
+        # Extract only PDFs that need extraction (not on remote)
+        if pdfs_need_extraction:
+            pdf_images, extraction_time = self._extract_pdfs_parallel(pdfs_need_extraction, batch_dir)
+        else:
+            pdf_images = {}
+            extraction_time = 0.0
+
+        # For PDFs on remote, we'll handle them differently in the remote detector
+        # Store list of remote PDFs for later processing
+        if pdfs_on_remote:
+            # Mark these for remote-side extraction
+            for pdf in pdfs_on_remote:
+                pdf_images[pdf.name] = 'REMOTE'  # Special marker
 
         # Flatten to all images
         all_images = []
         pdf_page_counts = {}
 
         # ═══════════════════════════════════════════════════════════════════
-        # BUG DETECTION: Check if pdf_images order matches pdf_batch order
+        # CHECKPOINT 2: Verify extraction preserved pdf_batch order
         # ═══════════════════════════════════════════════════════════════════
+        print("\n" + "="*70)
+        print(f"CHECKPOINT 2: After extraction (batch {batch_id})")
+        print("="*70)
+        logger.error(f"CHECKPOINT 2: After extraction (batch {batch_id})")
+
         pdf_images_order = [name for name in pdf_images.keys()]
         pdf_batch_order = [p.name for p in pdf_batch if p.name in pdf_images]
 
+        logger.error(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
+        logger.error(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
+        print(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
+        print(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
+
+        # Log to contamination logger
+        try:
+            from diagrams_in_arxiv.contamination_logger import log_checkpoint
+            checkpoint_status = "PASS" if pdf_images_order == pdf_batch_order else "FAIL"
+            log_checkpoint(
+                checkpoint=f"CHECKPOINT 2 (REMOTE batch {batch_id})",
+                status=checkpoint_status,
+                expected=pdf_batch_order,
+                actual=pdf_images_order,
+                details=f"After extraction (remote path), batch {batch_id}"
+            )
+        except ImportError:
+            pass  # Contamination logger not available in diagram_detector package
+
         if pdf_images_order != pdf_batch_order:
+            print(f"  ✗ ORDER MISMATCH at checkpoint 2!")
+            logger.error(f"  ✗ ORDER MISMATCH at checkpoint 2!")
             logger.error(f"")
             logger.error(f"{'═' * 70}")
             logger.error(f"ORDER MISMATCH DETECTED - ROOT CAUSE OF CONTAMINATION!")
@@ -620,6 +702,10 @@ class PDFRemoteDetector:
             logger.error(f"all_images will be built in pdf_images order,")
             logger.error(f"but results will be sliced in pdf_batch order.")
             logger.error(f"{'═' * 70}")
+        else:
+            print(f"  ✓ Extraction order matches!")
+            logger.error(f"  ✓ Extraction order matches!")
+        print("="*70 + "\n")
 
         # CRITICAL FIX: Iterate in pdf_batch order, not pdf_images.items() order!
         # This ensures all_images matches the order used for result slicing
@@ -739,6 +825,52 @@ class PDFRemoteDetector:
 
             all_images.extend(image_paths)
             pdf_page_counts[pdf_name] = len(image_paths)
+
+        # ═══════════════════════════════════════════════════════════════════
+        # CHECKPOINT 3: Verify all_images list built in correct order
+        # ═══════════════════════════════════════════════════════════════════
+        print("\n" + "="*70)
+        print(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
+        print("="*70)
+        logger.error(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
+        logger.error(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
+        logger.error(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
+        print(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
+        print(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
+
+        # Check if first images belong to first PDF
+        if len(all_images) > 0 and len(pdf_batch) > 0:
+            first_pdf = pdf_batch[0].name
+            first_pdf_stem = pdf_batch[0].stem
+            first_images_ok = all(first_pdf_stem in img.name for img in all_images[:5])
+
+            # Log to contamination logger
+            try:
+                from diagrams_in_arxiv.contamination_logger import log_checkpoint
+                checkpoint_status = "PASS" if first_images_ok else "FAIL"
+                expected_order = [f"{p.stem}_page_XXXX.jpg" for p in pdf_batch[:3]]
+                actual_order = [p.name for p in all_images[:20]]
+                log_checkpoint(
+                    checkpoint=f"CHECKPOINT 3 (REMOTE batch {batch_id})",
+                    status=checkpoint_status,
+                    expected=expected_order,
+                    actual=actual_order,
+                    details=f"After building all_images (remote path), batch {batch_id}, first_pdf={first_pdf}"
+                )
+            except ImportError:
+                pass  # Contamination logger not available
+
+            if first_images_ok:
+                print(f"  ✓ First images belong to first PDF ({first_pdf})!")
+                logger.error(f"  ✓ First images belong to first PDF ({first_pdf})!")
+            else:
+                print(f"  ✗ IMAGE ORDER MISMATCH!")
+                print(f"    First PDF: {first_pdf}")
+                print(f"    First images: {[p.name for p in all_images[:5]]}")
+                logger.error(f"  ✗ IMAGE ORDER MISMATCH!")
+                logger.error(f"    First PDF: {first_pdf}")
+                logger.error(f"    First images: {[p.name for p in all_images[:5]]}")
+        print("="*70 + "\n")
 
         if self.verbose:
             print(f"  Running remote inference on {len(all_images)} images...")
