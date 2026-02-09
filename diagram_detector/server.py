@@ -9,7 +9,7 @@ Protocol
 Startup
     Server prints ``READY`` on stdout once the model is loaded.
 
-Infer
+Infer (from uploaded images)
     Client writes one JSON line to stdin::
 
         {"type": "infer", "input": "<dir>", "output": "<dir>"}
@@ -18,6 +18,19 @@ Infer
     then prints one JSON line on stdout::
 
         {"status": "DONE",  "output": "<dir>", "num_results": N}
+
+    On error::
+
+        {"status": "ERROR", "error": "<message>"}
+
+Infer PDFs (from remote filesystem)
+    Client writes one JSON line to stdin::
+
+        {"type": "infer_pdfs", "pdfs": ["path/to/file.pdf", ...], "output": "<dir>"}
+
+    Server extracts PDFs from remote filesystem, runs detection, saves results::
+
+        {"status": "DONE",  "output": "<dir>", "num_results": N, "pdfs_processed": M}
 
     On error::
 
@@ -137,6 +150,52 @@ def main():
                     "error": str(e),
                 }))
                 # Server stays alive — next batch can still be attempted
+
+        elif cmd_type == "infer_pdfs":
+            # New command: detect PDFs directly from remote filesystem
+            # PDFs are already on remote, no upload needed
+            pdf_paths = [Path(p).expanduser() for p in cmd["pdfs"]]
+            output_dir = Path(cmd["output"]).expanduser()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                # Extract PDFs to temporary directory on remote
+                import tempfile
+                from .utils import convert_pdf_to_images
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+
+                    # Extract all PDFs to temp directory
+                    for pdf_path in pdf_paths:
+                        if not pdf_path.exists():
+                            raise FileNotFoundError(f"PDF not found on remote: {pdf_path}")
+
+                        # Extract PDF to images
+                        image_paths = convert_pdf_to_images(pdf_path, temp_path, dpi=200)
+                        if not image_paths:
+                            sys.stderr.write(f"Warning: No pages extracted from {pdf_path.name}\n")
+
+                    # Run detection on extracted images
+                    results = detector.detect(temp_path, store_images=False)
+
+                    # Save results
+                    detector.save_results(results, output_dir, format="json")
+
+                    _send(json.dumps({
+                        "status": "DONE",
+                        "output": str(output_dir),
+                        "num_results": len(results),
+                        "pdfs_processed": len(pdf_paths),
+                    }))
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                _send(json.dumps({
+                    "status": "ERROR",
+                    "error": str(e),
+                }))
 
         else:
             _send(json.dumps({"status": "ERROR", "error": f"Unknown command type: {cmd_type}"}))
