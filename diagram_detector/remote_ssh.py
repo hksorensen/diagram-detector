@@ -5,21 +5,22 @@ Run inference on remote GPU server via SSH with intelligent batching.
 Optimized for processing large image corpora (100K+ images).
 """
 
-from pathlib import Path
-from typing import List, Union, Optional
-import subprocess
 import json
-from dataclasses import dataclass
-import tempfile
 import shutil
-import time
-import threading
+import subprocess
 import sys
+import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import List, Optional, Union
 
 try:
     from network_utils import SFTPUploader
+
     SFTP_AVAILABLE = True
 except ImportError:
     SFTP_AVAILABLE = False
@@ -117,17 +118,21 @@ class RemoteConfig:
 
         # Connection multiplexing (reuse single SSH connection for multiple rsync operations)
         if control_path:
-            ssh_opts.extend([
-                f"-o ControlMaster=auto",
-                f"-o ControlPath={control_path}",
-                f"-o ControlPersist=600",  # Keep connection alive for 10 minutes
-            ])
+            ssh_opts.extend(
+                [
+                    "-o ControlMaster=auto",
+                    f"-o ControlPath={control_path}",
+                    "-o ControlPersist=600",  # Keep connection alive for 10 minutes
+                ]
+            )
 
         # Keep-alive to detect dead connections
-        ssh_opts.extend([
-            "-o ServerAliveInterval=15",  # Send keepalive every 15s
-            "-o ServerAliveCountMax=3",    # Fail after 3 missed keepalives (45s)
-        ])
+        ssh_opts.extend(
+            [
+                "-o ServerAliveInterval=15",  # Send keepalive every 15s
+                "-o ServerAliveCountMax=3",  # Fail after 3 missed keepalives (45s)
+            ]
+        )
 
         # Batch mode (don't ask for passwords/confirmations)
         ssh_opts.append("-o BatchMode=yes")
@@ -184,7 +189,7 @@ class RemoteConfig:
 
         # Extract subsection if key provided
         if key:
-            for key_part in key.split('.'):
+            for key_part in key.split("."):
                 if not isinstance(data, dict) or key_part not in data:
                     raise ValueError(f"Key '{key}' not found in config file: {config_path}")
                 data = data[key_part]
@@ -229,9 +234,7 @@ class RemoteConfig:
                 except (ValueError, KeyError):
                     return cls.from_yaml(env_path)
             else:
-                raise FileNotFoundError(
-                    f"Config file specified in DIAGRAM_DETECTOR_CONFIG not found: {env_path}"
-                )
+                raise FileNotFoundError(f"Config file specified in DIAGRAM_DETECTOR_CONFIG not found: {env_path}")
 
         # Check standard locations
         search_paths = [
@@ -340,6 +343,7 @@ class SSHRemoteDetector:
         # Generate run ID if not provided
         if run_id is None:
             from datetime import datetime
+
             run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S")
         self.run_id = run_id
 
@@ -351,6 +355,7 @@ class SSHRemoteDetector:
         # Use short path to avoid Unix domain socket path length limit (104 bytes on macOS)
         # Format: /tmp/dd-{PID}-{timestamp} (e.g., /tmp/dd-12345-150827)
         import os
+
         timestamp = datetime.now().strftime("%H%M%S")
         socket_name = f"dd-{os.getpid()}-{timestamp}"
         self._ssh_control_path = f"/tmp/{socket_name}"
@@ -377,13 +382,20 @@ class SSHRemoteDetector:
         self.cleanup()
         return False
 
-    def cleanup(self):
-        """Clean up SSH control socket and connections."""
-        # Stop persistent inference server if running
-        self._stop_persistent_server()
+    def cleanup(self, stop_server: bool = False):
+        """Clean up SSH control socket and connections.
+
+        Args:
+            stop_server: If True, also stop the persistent server.
+                        Default False to allow server reuse across batches.
+        """
+        # Stop persistent inference server only if explicitly requested
+        # This allows the server to stay alive across multiple batches
+        if stop_server:
+            self._stop_persistent_server()
 
         # Close persistent SFTP uploader if it exists
-        if hasattr(self, '_sftp_uploader') and self._sftp_uploader is not None:
+        if hasattr(self, "_sftp_uploader") and self._sftp_uploader is not None:
             try:
                 self._sftp_uploader.close()
             except Exception:
@@ -391,16 +403,22 @@ class SSHRemoteDetector:
             self._sftp_uploader = None
 
         # Close SSH control master connection if it exists
-        if hasattr(self, '_ssh_control_path') and self._ssh_control_path:
+        if hasattr(self, "_ssh_control_path") and self._ssh_control_path:
             control_path = Path(self._ssh_control_path)
             if control_path.exists():
                 # Ask SSH to close the control master connection
                 try:
-                    cmd = [
-                        "ssh",
-                        "-O", "exit",
-                        "-o", f"ControlPath={self._ssh_control_path}",
-                    ] + self.config.ssh_port_args + [self.config.ssh_target]
+                    cmd = (
+                        [
+                            "ssh",
+                            "-O",
+                            "exit",
+                            "-o",
+                            f"ControlPath={self._ssh_control_path}",
+                        ]
+                        + self.config.ssh_port_args
+                        + [self.config.ssh_target]
+                    )
                     subprocess.run(cmd, capture_output=True, timeout=5)
                 except Exception:
                     pass  # Ignore cleanup errors
@@ -411,6 +429,15 @@ class SSHRemoteDetector:
                 except Exception:
                     pass
 
+    def __del__(self):
+        """Destructor - ensure persistent server is stopped."""
+        # Stop server and cleanup when object is destroyed
+        try:
+            self._stop_persistent_server()
+            self.cleanup(stop_server=False)  # Don't double-stop
+        except Exception:
+            pass  # Ignore errors during destruction
+
     def get_gpu_memory(self) -> tuple[int, int]:
         """
         Query GPU memory usage on remote server.
@@ -418,15 +445,20 @@ class SSHRemoteDetector:
         Returns:
             Tuple of (memory_used_mb, memory_free_mb)
         """
-        cmd = [
-            "ssh"
-        ] + self.config.ssh_port_args + [
-            "-o", "ControlMaster=auto",
-            "-o", f"ControlPath={self._ssh_control_path}",
-            "-o", "ControlPersist=600",
-            self.config.ssh_target,
-            "nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader,nounits"
-        ]
+        cmd = (
+            ["ssh"]
+            + self.config.ssh_port_args
+            + [
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                f"ControlPath={self._ssh_control_path}",
+                "-o",
+                "ControlPersist=600",
+                self.config.ssh_target,
+                "nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader,nounits",
+            ]
+        )
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -510,18 +542,20 @@ class SSHRemoteDetector:
 
         try:
             import yaml
+
             with open(config_path, "w") as f:
                 yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
         except ImportError:
             # Fallback to JSON if PyYAML not available
             import json
+
             config_path = config_dir / f"{self.run_id}.json"
             with open(config_path, "w") as f:
                 json.dump(config_data, f, indent=2)
 
         if self.verbose:
             print(f"✓ Run config created: {config_path}")
-            print(f"  (This config is used for ALL batches in this run)")
+            print("  (This config is used for ALL batches in this run)")
 
         self._run_config_path = config_path
         return config_path
@@ -543,25 +577,17 @@ class SSHRemoteDetector:
 
         # Check if in git repo
         try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                cwd=config_file.parent,
-                capture_output=True,
-                check=True
+            _ = subprocess.run(
+                ["git", "rev-parse", "--git-dir"], cwd=config_file.parent, capture_output=True, check=True
             )
         except subprocess.CalledProcessError:
             if self.verbose:
-                print(f"  ⚠ Not in a git repository, skipping auto-commit")
+                print("  ⚠ Not in a git repository, skipping auto-commit")
             return False
 
         # Add config file
         try:
-            subprocess.run(
-                ["git", "add", str(config_file)],
-                cwd=config_file.parent,
-                capture_output=True,
-                check=True
-            )
+            subprocess.run(["git", "add", str(config_file)], cwd=config_file.parent, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
             if self.verbose:
                 print(f"  ⚠ Failed to git add config: {e}")
@@ -573,12 +599,7 @@ class SSHRemoteDetector:
 
         # Commit
         try:
-            subprocess.run(
-                ["git", "commit", "-m", message],
-                cwd=config_file.parent,
-                capture_output=True,
-                check=True
-            )
+            subprocess.run(["git", "commit", "-m", message], cwd=config_file.parent, capture_output=True, check=True)
 
             if self.verbose:
                 print(f"  ✓ Config committed to git: {config_file.name}")
@@ -622,19 +643,22 @@ class SSHRemoteDetector:
                         print("✓ SSH connection verified")
                 return  # Success!
 
-            except subprocess.TimeoutExpired as e:
+            except subprocess.TimeoutExpired:
                 last_error = RuntimeError("SSH connection timed out")
             except Exception as e:
                 last_error = RuntimeError(f"SSH connection failed: {e}")
 
             # If this wasn't the last attempt, wait and retry
             if attempt < max_retries - 1:
-                retry_msg = f"⚠ SSH connection failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.1f}s..."
+                retry_msg = (
+                    f"⚠ SSH connection failed (attempt {attempt + 1}/{max_retries}). Retrying in {delay:.1f}s..."
+                )
                 if self.verbose:
                     print(retry_msg)
                 else:
                     # Always log retries even if not verbose (important for unsupervised runs)
                     import logging
+
                     logger = logging.getLogger(__name__)
                     logger.warning(retry_msg)
 
@@ -661,9 +685,9 @@ class SSHRemoteDetector:
         test_size_bytes = test_size_mb * 1024 * 1024
 
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
                 # Write random data
-                f.write(b'0' * test_size_bytes)
+                f.write(b"0" * test_size_bytes)
                 test_file = Path(f.name)
 
             # Remote test location
@@ -671,7 +695,7 @@ class SSHRemoteDetector:
             self._run_ssh_command(f"mkdir -p {remote_test_dir}", check=True)
 
             # Upload test file with rsync
-            print(f"Measuring network throughput ({test_size_mb}MB test upload)...", end='', flush=True)
+            print(f"Measuring network throughput ({test_size_mb}MB test upload)...", end="", flush=True)
 
             start_time = time.time()
             cmd = (
@@ -708,16 +732,26 @@ class SSHRemoteDetector:
 
     def _run_ssh_command(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run command on remote server with retry logic for transient failures."""
-        cmd = ["ssh"] + self.config.ssh_port_args + [
-            "-o", "ControlMaster=auto",
-            "-o", f"ControlPath={self._ssh_control_path}",
-            "-o", "ControlPersist=600",
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "BatchMode=yes",
-            self.config.ssh_target,
-            command
-        ]
+        cmd = (
+            ["ssh"]
+            + self.config.ssh_port_args
+            + [
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                f"ControlPath={self._ssh_control_path}",
+                "-o",
+                "ControlPersist=600",
+                "-o",
+                "ServerAliveInterval=15",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-o",
+                "BatchMode=yes",
+                self.config.ssh_target,
+                command,
+            ]
+        )
 
         max_attempts = self.config.max_rsync_retries
         last_error = None
@@ -730,16 +764,19 @@ class SSHRemoteDetector:
 
             # Check if this is a transient error worth retrying
             stderr = result.stderr or ""
-            is_transient = any(pattern in stderr.lower() for pattern in [
-                "connection closed",
-                "connection unexpectedly closed",
-                "connection refused",
-                "connection timed out",
-                "connection reset",
-                "broken pipe",
-                "network is unreachable",
-                "no route to host",
-            ])
+            is_transient = any(
+                pattern in stderr.lower()
+                for pattern in [
+                    "connection closed",
+                    "connection unexpectedly closed",
+                    "connection refused",
+                    "connection timed out",
+                    "connection reset",
+                    "broken pipe",
+                    "network is unreachable",
+                    "no route to host",
+                ]
+            )
 
             last_error = (
                 f"SSH command failed (attempt {attempt}/{max_attempts})\n"
@@ -756,7 +793,7 @@ class SSHRemoteDetector:
                 raise RuntimeError(f"Remote command failed after {attempt} attempts.\n  {last_error}")
 
             # Transient error - retry with exponential backoff
-            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            wait_time = 2**attempt  # 2s, 4s, 8s, ...
             if self.verbose:
                 print(f"  ⚠ SSH connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
                 print(f"    Error: {stderr.strip()}")
@@ -778,7 +815,7 @@ class SSHRemoteDetector:
         # Try fancy Unicode spinner, fallback to ASCII if terminal doesn't support it
         try:
             # Test Unicode support by encoding
-            test = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".encode(sys.stdout.encoding or 'utf-8')
+            _ = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".encode(sys.stdout.encoding or "utf-8")
             spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         except (AttributeError, UnicodeEncodeError, LookupError):
             # Fallback to ASCII spinner
@@ -840,11 +877,7 @@ class SSHRemoteDetector:
 
         return result_container[0] if result_container else None
 
-    def _run_rsync_with_retry(
-        self,
-        cmd: List[str],
-        operation: str = "rsync"
-    ) -> subprocess.CompletedProcess:
+    def _run_rsync_with_retry(self, cmd: List[str], operation: str = "rsync") -> subprocess.CompletedProcess:
         """
         Run rsync command with retry logic for transient failures.
 
@@ -868,22 +901,25 @@ class SSHRemoteDetector:
 
             # Check if this is a transient error worth retrying
             stderr = result.stderr.decode() if result.stderr else ""
-            is_transient = any(pattern in stderr.lower() for pattern in [
-                "connection closed",
-                "connection unexpectedly closed",
-                "connection refused",
-                "connection timed out",
-                "broken pipe",
-                "network is unreachable",
-                "no route to host",
-            ])
+            is_transient = any(
+                pattern in stderr.lower()
+                for pattern in [
+                    "connection closed",
+                    "connection unexpectedly closed",
+                    "connection refused",
+                    "connection timed out",
+                    "broken pipe",
+                    "network is unreachable",
+                    "no route to host",
+                ]
+            )
 
             if not is_transient or attempt == max_attempts:
                 # Non-transient error or final attempt - fail immediately
                 raise RuntimeError(f"{operation.capitalize()} failed: {result.stderr}")
 
             # Transient error - retry with exponential backoff
-            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            wait_time = 2**attempt  # 2s, 4s, 8s, ...
             if self.verbose:
                 print(f"  Connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
             time.sleep(wait_time)
@@ -921,6 +957,7 @@ class SSHRemoteDetector:
             List of remote PDF paths (full paths on remote)
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not pdf_paths:
@@ -937,7 +974,7 @@ class SSHRemoteDetector:
 
         for pdf_path in pdf_paths:
             # Determine if arxiv or published based on parent directory name
-            if 'arxiv' in str(pdf_path.parent).lower():
+            if "arxiv" in str(pdf_path.parent).lower():
                 arxiv_pdfs.append(pdf_path)
             else:
                 published_pdfs.append(pdf_path)
@@ -951,9 +988,11 @@ class SSHRemoteDetector:
                 remote_path = f"{remote_arxiv_dir}/{pdf_path.name}"
                 # Use rsync for efficient upload (skip if already exists and same size)
                 rsync_cmd = [
-                    "rsync", "-az", "--partial",
+                    "rsync",
+                    "-az",
+                    "--partial",
                     str(pdf_path),
-                    f"{self.config.user}@{self.config.host}:{remote_path}"
+                    f"{self.config.user}@{self.config.host}:{remote_path}",
                 ] + self.config.get_rsync_ssh_args(self._ssh_control_path)
 
                 result = subprocess.run(rsync_cmd, capture_output=True, text=True)
@@ -970,9 +1009,11 @@ class SSHRemoteDetector:
             for pdf_path in published_pdfs:
                 remote_path = f"{remote_published_dir}/{pdf_path.name}"
                 rsync_cmd = [
-                    "rsync", "-az", "--partial",
+                    "rsync",
+                    "-az",
+                    "--partial",
                     str(pdf_path),
-                    f"{self.config.user}@{self.config.host}:{remote_path}"
+                    f"{self.config.user}@{self.config.host}:{remote_path}",
                 ] + self.config.get_rsync_ssh_args(self._ssh_control_path)
 
                 result = subprocess.run(rsync_cmd, capture_output=True, text=True)
@@ -989,6 +1030,7 @@ class SSHRemoteDetector:
     def _upload_batch(self, image_paths: List[Path], batch_id: str) -> None:
         """Upload batch of images via SFTP (with progress bar) or rsync (fallback)."""
         import logging
+
         logger = logging.getLogger(__name__)
         logger.debug(f"[UPLOAD] _upload_batch called with {len(image_paths)} image paths")
         if len(image_paths) > 0:
@@ -1018,6 +1060,7 @@ class SSHRemoteDetector:
                         copy_errors.append((img_path, str(e)))
 
             import logging
+
             logger = logging.getLogger(__name__)
 
             if missing_files:
@@ -1032,14 +1075,17 @@ class SSHRemoteDetector:
 
             # Count files in temp directory before rsync
             import logging
+
             logger = logging.getLogger(__name__)
             temp_files = list(temp_path.glob("*.jpg")) + list(temp_path.glob("*.png"))
-            logger.debug(f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})")
+            logger.debug(
+                f"[UPLOAD] Batch {batch_id}: {len(temp_files)} files in temp dir (expected {len(image_paths)})"
+            )
 
             # Create manifest file with explicit ordering
             # This ensures remote detector processes images in the exact order of image_paths
             manifest_path = temp_path / "manifest.txt"
-            with open(manifest_path, 'w') as f:
+            with open(manifest_path, "w") as f:
                 f.write("# Image processing manifest - explicit ordering\n")
                 f.write(f"# Batch: {batch_id}\n")
                 f.write(f"# Images: {len(image_paths)}\n")
@@ -1064,15 +1110,18 @@ class SSHRemoteDetector:
 
             # CRITICAL FIX: Preserve image_paths order instead of using glob (which returns arbitrary filesystem order)
             # Build files_to_upload in the same order as image_paths to prevent contamination
-            files_to_upload = [temp_path / img_path.name for img_path in image_paths
-                             if (temp_path / img_path.name).exists()]
+            files_to_upload = [
+                temp_path / img_path.name for img_path in image_paths if (temp_path / img_path.name).exists()
+            ]
 
             # Add manifest file to upload (must be uploaded for remote to use explicit ordering)
             files_to_upload.insert(0, manifest_path)  # Insert at beginning so it's uploaded first
 
             num_files = len(files_to_upload)
 
-            logger.debug(f"[UPLOAD] Starting parallel rsync upload of {num_files} files (order preserved from image_paths)")
+            logger.debug(
+                f"[UPLOAD] Starting parallel rsync upload of {num_files} files (order preserved from image_paths)"
+            )
 
             if num_files == 0:
                 logger.warning(f"No files to upload for batch {batch_id}")
@@ -1101,7 +1150,8 @@ class SSHRemoteDetector:
                     try:
                         # Create temp file list for rsync --files-from
                         import tempfile
-                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+
+                        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
                             for file in files:
                                 f.write(f"{file.name}\n")
                             files_list_path = f.name
@@ -1114,7 +1164,8 @@ class SSHRemoteDetector:
                                     "-a",  # Archive mode (no compression)
                                     "--whole-file",  # Skip delta algorithm (files are new)
                                     "--inplace",  # Write directly, no temp files
-                                    "--files-from", files_list_path,
+                                    "--files-from",
+                                    files_list_path,
                                 ]
                                 + self.config.get_rsync_ssh_args(self._ssh_control_path)
                                 + [str(temp_path) + "/", f"{self.config.ssh_target}:{remote_input}"]
@@ -1138,17 +1189,18 @@ class SSHRemoteDetector:
 
                 if self.verbose and len(file_groups) > 1:
                     from tqdm import tqdm
+
                     progress = tqdm(
                         total=len(file_groups),
                         desc=f"  Uploading {num_files} files",
                         unit="process",
                         leave=False,
-                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} processes'
+                        bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} processes",
                     )
 
                 if len(file_groups) == 1:
                     # Single group - just use regular rsync
-                    logger.info(f"[UPLOAD] Single group, using sequential rsync")
+                    logger.info("[UPLOAD] Single group, using sequential rsync")
                     cmd = (
                         [
                             "rsync",
@@ -1188,9 +1240,13 @@ class SSHRemoteDetector:
                         raise RuntimeError(f"Parallel rsync upload failed: {upload_errors[0][1]}")
 
                 upload_time = time.time() - upload_start
-                logger.debug(f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
+                logger.debug(
+                    f"[UPLOAD] Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)"
+                )
                 if self.verbose:
-                    print(f"  ✓ Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
+                    print(
+                        f"  ✓ Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)"
+                    )
 
             # Verify upload - check file count and sizes on remote
             # First: count files (expect images + manifest.txt)
@@ -1199,23 +1255,27 @@ class SSHRemoteDetector:
             if result.returncode == 0:
                 remote_count = int(result.stdout.strip())
                 expected_count = len(image_paths) + 1  # +1 for manifest.txt
-                logger.info(f"[UPLOAD] Upload verification: {remote_count} files in {remote_input} (expected {expected_count}: {len(image_paths)} images + manifest.txt)")
+                logger.info(
+                    f"[UPLOAD] Upload verification: {remote_count} files in {remote_input} (expected {expected_count}: {len(image_paths)} images + manifest.txt)"
+                )
                 if remote_count != expected_count:
                     logger.error(f"[UPLOAD] MISMATCH: Found {remote_count} files, expected {expected_count}!")
                     # List what files are actually there
                     ls_result = self._run_ssh_command(f"ls -la {remote_input}", check=False)
                     logger.error(f"[UPLOAD] Remote directory contents:\n{ls_result.stdout}")
-                    raise RuntimeError(f"Upload verification failed: expected {expected_count} files (images + manifest), found {remote_count}")
+                    raise RuntimeError(
+                        f"Upload verification failed: expected {expected_count} files (images + manifest), found {remote_count}"
+                    )
 
                 # Second: verify file sizes match
-                logger.info(f"[UPLOAD] Verifying file sizes...")
+                logger.info("[UPLOAD] Verifying file sizes...")
                 # Use stat -f (BSD/macOS) or stat -c (Linux) for cross-platform size checking
                 # Try Linux format first, fall back to macOS format
                 size_cmd = f"stat -c '%s %n' {remote_input}* 2>/dev/null || stat -f '%z %N' {remote_input}*"
                 size_result = self._run_ssh_command(size_cmd, check=False)
                 if size_result.returncode == 0:
                     remote_files = {}
-                    for line in size_result.stdout.strip().split('\n'):
+                    for line in size_result.stdout.strip().split("\n"):
                         if line:
                             parts = line.split(maxsplit=1)
                             if len(parts) == 2:
@@ -1239,19 +1299,21 @@ class SSHRemoteDetector:
                         logger.error(f"[UPLOAD] SIZE MISMATCH: {len(size_mismatches)} files have wrong size!")
                         for mismatch in size_mismatches[:5]:  # Show first 5
                             logger.error(f"  {mismatch}")
-                        raise RuntimeError(f"Upload verification failed: {len(size_mismatches)} files have incorrect size")
+                        raise RuntimeError(
+                            f"Upload verification failed: {len(size_mismatches)} files have incorrect size"
+                        )
                     else:
                         logger.info(f"[UPLOAD] ✓ Size verification passed: all {len(local_sizes)} files match")
                 else:
-                    logger.warning(f"[UPLOAD] Could not verify file sizes (du command failed)")
+                    logger.warning("[UPLOAD] Could not verify file sizes (du command failed)")
 
                 # Third: Force filesystem sync and add small delay
-                logger.info(f"[UPLOAD] Syncing filesystem...")
-                self._run_ssh_command(f"sync", check=False)
+                logger.info("[UPLOAD] Syncing filesystem...")
+                self._run_ssh_command("sync", check=False)
                 time.sleep(0.5)  # 500ms delay for filesystem to settle
                 logger.info(f"[UPLOAD] ✓ Verification passed: all {len(image_paths)} images uploaded (+ manifest.txt)")
             else:
-                logger.error(f"[UPLOAD] Failed to verify upload - ls command failed")
+                logger.error("[UPLOAD] Failed to verify upload - ls command failed")
                 logger.error(f"  Return code: {result.returncode}")
                 logger.error(f"  Stderr: {result.stderr}")
                 raise RuntimeError(f"Upload verification failed: ls command returned {result.returncode}")
@@ -1269,6 +1331,7 @@ class SSHRemoteDetector:
 
         # Debug: Check what's actually in the input directory before inference
         import logging
+
         logger = logging.getLogger(__name__)
         debug_cmd = f"ls -la {input_dir} | head -20"
         debug_result = self._run_ssh_command(debug_cmd, check=False)
@@ -1283,12 +1346,16 @@ class SSHRemoteDetector:
         # SCP upload with retry logic for transient connection failures
         scp_cmd = [
             "scp",
-            "-P", str(self.config.port),
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "BatchMode=yes",
+            "-P",
+            str(self.config.port),
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "BatchMode=yes",
             str(run_config_local),
-            f"{self.config.user}@{self.config.host}:{remote_config_file}"
+            f"{self.config.user}@{self.config.host}:{remote_config_file}",
         ]
 
         max_attempts = self.config.max_rsync_retries
@@ -1304,15 +1371,18 @@ class SSHRemoteDetector:
             stdout = result.stdout.decode() if result.stdout else ""
 
             # Check if this is a transient error worth retrying
-            is_transient = any(pattern in stderr.lower() for pattern in [
-                "connection closed",
-                "connection unexpectedly closed",
-                "connection refused",
-                "connection timed out",
-                "broken pipe",
-                "network is unreachable",
-                "no route to host",
-            ])
+            is_transient = any(
+                pattern in stderr.lower()
+                for pattern in [
+                    "connection closed",
+                    "connection unexpectedly closed",
+                    "connection refused",
+                    "connection timed out",
+                    "broken pipe",
+                    "network is unreachable",
+                    "no route to host",
+                ]
+            )
 
             last_error = (
                 f"SCP upload failed (attempt {attempt}/{max_attempts})\n"
@@ -1327,7 +1397,9 @@ class SSHRemoteDetector:
                 # Also verify SSH connection state for better diagnostics
                 ssh_check = subprocess.run(
                     ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target, "echo OK"],
-                    capture_output=True, text=True, timeout=10
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
                 ssh_status = "OK" if ssh_check.returncode == 0 else f"FAILED ({ssh_check.stderr.strip()})"
 
@@ -1338,7 +1410,7 @@ class SSHRemoteDetector:
                 )
 
             # Transient error - retry with exponential backoff
-            wait_time = 2 ** attempt  # 2s, 4s, 8s, ...
+            wait_time = 2**attempt  # 2s, 4s, 8s, ...
             if self.verbose:
                 print(f"  ⚠ SCP connection error, retrying in {wait_time}s (attempt {attempt}/{max_attempts})...")
                 print(f"    Error: {stderr.strip()}")
@@ -1369,7 +1441,7 @@ class SSHRemoteDetector:
             f"--quiet "
             f">> {log_file} 2>> {err_file}; "  # Semicolon to capture exit code
             f"EXIT_CODE=$?; "
-            f"echo \"Exit code: $EXIT_CODE\" >> {log_file}; "
+            f'echo "Exit code: $EXIT_CODE" >> {log_file}; '
             f"nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits >> {log_file} 2>/dev/null; "
             f"exit $EXIT_CODE"  # Preserve original exit code
         )
@@ -1412,6 +1484,7 @@ class SSHRemoteDetector:
         # Copy run config to run output directory (once per run)
         if self._run_config_path and not (run_output / "config.yaml").exists():
             import shutil
+
             shutil.copy2(self._run_config_path, run_output / "config.yaml")
             if self.verbose:
                 print(f"  ✓ Run config copied to: {run_output / 'config.yaml'}")
@@ -1422,15 +1495,16 @@ class SSHRemoteDetector:
 
         if err_file.exists() and err_file.stat().st_size > 0:
             import logging
+
             logger = logging.getLogger(__name__)
 
             # Read error log
-            with open(err_file, 'r') as f:
+            with open(err_file, "r") as f:
                 errors = f.read()
 
             # Filter out dummy test lines (written before inference starts)
             error_lines = []
-            for line in errors.strip().split('\n'):
+            for line in errors.strip().split("\n"):
                 # Skip dummy lines that we write for testing
                 if line.startswith("Batch: "):
                     continue
@@ -1515,17 +1589,21 @@ class SSHRemoteDetector:
 
         tensorrt_flag = "--tensorrt " if self.tensorrt else ""
         cmd = (
-            ["ssh"] + self.config.ssh_port_args + [self.config.ssh_target,
-            f"cd {self.config.remote_work_dir} && "
-            f"ulimit -n 4096 && "
-            f"{self.config.python_path} -u -m diagram_detector.server "
-            f"--model {self.model} "
-            f"--confidence {self.confidence} "
-            f"--iou {self.iou} "
-            f"--imgsz {self.imgsz} "
-            f"--device auto "
-            f"{tensorrt_flag}"
-            f"--batch-size {self.gpu_batch_size}"]
+            ["ssh"]
+            + self.config.ssh_port_args
+            + [
+                self.config.ssh_target,
+                f"cd {self.config.remote_work_dir} && "
+                f"ulimit -n 4096 && "
+                f"{self.config.python_path} -u -m diagram_detector.server "
+                f"--model {self.model} "
+                f"--confidence {self.confidence} "
+                f"--iou {self.iou} "
+                f"--imgsz {self.imgsz} "
+                f"--device auto "
+                f"{tensorrt_flag}"
+                f"--batch-size {self.gpu_batch_size}",
+            ]
         )
 
         if self.verbose:
@@ -1571,12 +1649,9 @@ class SSHRemoteDetector:
             RuntimeError: If the server reports an error or the process died.
         """
         if self._server_proc is None or self._server_proc.poll() is not None:
-            raise RuntimeError(
-                "Persistent server process is not running. "
-                "Call _start_persistent_server() first."
-            )
+            raise RuntimeError("Persistent server process is not running. " "Call _start_persistent_server() first.")
 
-        input_dir  = f"{self.config.remote_work_dir}/input/{batch_id}"
+        input_dir = f"{self.config.remote_work_dir}/input/{batch_id}"
         output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"  # must match _download_results
 
         cmd = json.dumps({"type": "infer", "input": input_dir, "output": output_dir})
@@ -1604,14 +1679,10 @@ class SSHRemoteDetector:
                 if self.verbose:
                     print(f"  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
         if response["status"] == "ERROR":
-            raise RuntimeError(
-                f"Persistent server error on batch {batch_id}: {response['error']}"
-            )
+            raise RuntimeError(f"Persistent server error on batch {batch_id}: {response['error']}")
 
         if response["status"] != "DONE":
-            raise RuntimeError(
-                f"Unexpected response from persistent server: {response}"
-            )
+            raise RuntimeError(f"Unexpected response from persistent server: {response}")
 
         if self.verbose:
             print(f"  ✓ Batch {batch_id} processed (persistent server, {num_images} images)")
@@ -1644,9 +1715,7 @@ class SSHRemoteDetector:
             if not response_line:
                 self._server_proc.wait()
                 self._server_proc = None
-                raise RuntimeError(
-                    f"Persistent server died during PDF inference (batch {batch_id})"
-                )
+                raise RuntimeError(f"Persistent server died during PDF inference (batch {batch_id})")
             try:
                 response = json.loads(response_line)
                 break
@@ -1655,9 +1724,7 @@ class SSHRemoteDetector:
                     print(f"  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
 
         if response["status"] == "ERROR":
-            raise RuntimeError(
-                f"Persistent server error on PDF batch {batch_id}: {response['error']}"
-            )
+            raise RuntimeError(f"Persistent server error on PDF batch {batch_id}: {response['error']}")
 
         if response["status"] != "DONE":
             raise RuntimeError(f"Unexpected response from persistent server: {response}")
@@ -1765,9 +1832,9 @@ class SSHRemoteDetector:
         if self.verbose:
             print(f"Processing {len(image_paths):,} images in {num_batches} batch(es)...")
             if self.use_persistent_server:
-                print(f"  Mode: persistent server (model loads once)\n")
+                print("  Mode: persistent server (model loads once)\n")
             else:
-                print(f"  Mode: per-batch spawn (model reloads each batch)\n")
+                print("  Mode: per-batch spawn (model reloads each batch)\n")
 
         # Start persistent inference server (if requested) — model loads here
         if self.use_persistent_server:
@@ -1793,15 +1860,20 @@ class SSHRemoteDetector:
                         print(f"✓ Batch {batch_id} already processed (resuming)")
                     results = self._parse_results(batch_output_dir)
                     import logging
+
                     _logger = logging.getLogger(__name__)
                     _logger.info(
                         "[REMOTE INFERENCE] resume batch_id=%s expected=%d received=%d",
-                        batch_id, len(batch_paths), len(results),
+                        batch_id,
+                        len(batch_paths),
+                        len(results),
                     )
                     if len(results) != len(batch_paths):
                         _logger.error(
                             "Resumed batch result count mismatch: batch_id=%s expected=%d received=%d",
-                            batch_id, len(batch_paths), len(results),
+                            batch_id,
+                            len(batch_paths),
+                            len(results),
                         )
                         raise RuntimeError(
                             f"Resumed batch {batch_id} has {len(results)} results for {len(batch_paths)} images. "
@@ -1831,10 +1903,13 @@ class SSHRemoteDetector:
                 # 4. Parse results and validate sub-batch result count
                 results = self._parse_results(batch_results_dir)
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.info(
                     "[REMOTE INFERENCE] batch_id=%s expected=%d received=%d",
-                    batch_id, len(batch_paths), len(results),
+                    batch_id,
+                    len(batch_paths),
+                    len(results),
                 )
                 if self.verbose:
                     print(f"  ✓ Parsed {len(results)} results from batch {batch_id} (expected {len(batch_paths)})")
@@ -1845,7 +1920,10 @@ class SSHRemoteDetector:
                 if len(results) != len(batch_paths):
                     logger.error(
                         "Sub-batch result count mismatch: batch_id=%s expected=%d received=%d (missing=%d)",
-                        batch_id, len(batch_paths), len(results), len(batch_paths) - len(results),
+                        batch_id,
+                        len(batch_paths),
+                        len(results),
+                        len(batch_paths) - len(results),
                     )
                     # Retry sub-batch once (inference only; images already on remote)
                     if self.verbose:
@@ -1858,7 +1936,9 @@ class SSHRemoteDetector:
                     results = self._parse_results(batch_results_dir_retry)
                     logger.info(
                         "[REMOTE INFERENCE] retry batch_id=%s expected=%d received=%d",
-                        batch_id, len(batch_paths), len(results),
+                        batch_id,
+                        len(batch_paths),
+                        len(results),
                     )
                     if len(results) != len(batch_paths):
                         raise RuntimeError(
@@ -1878,9 +1958,13 @@ class SSHRemoteDetector:
                 if self.verbose:
                     batch_diagrams = sum(r.count for r in results)
                     total_time = upload_time + inference_time + download_time
-                    print(f"\n  Timing breakdown:")
-                    print(f"    Upload:    {upload_time:6.1f}s ({upload_time/total_time*100:4.1f}%) - {len(batch_paths)/upload_time:.1f} imgs/s")
-                    print(f"    Inference: {inference_time:6.1f}s ({inference_time/total_time*100:4.1f}%) - {len(batch_paths)/inference_time:.1f} imgs/s")
+                    print("\n  Timing breakdown:")
+                    print(
+                        f"    Upload:    {upload_time:6.1f}s ({upload_time/total_time*100:4.1f}%) - {len(batch_paths)/upload_time:.1f} imgs/s"
+                    )
+                    print(
+                        f"    Inference: {inference_time:6.1f}s ({inference_time/total_time*100:4.1f}%) - {len(batch_paths)/inference_time:.1f} imgs/s"
+                    )
                     print(f"    Download:  {download_time:6.1f}s ({download_time/total_time*100:4.1f}%)")
                     print(f"    Total:     {total_time:6.1f}s - {len(batch_paths)/total_time:.1f} imgs/s")
                     print(f"\n  ✓ Batch complete: {batch_diagrams} diagrams found")
@@ -1945,10 +2029,7 @@ def parse_remote_string(remote_str: str) -> RemoteConfig:
 
 
 def is_remote_available(
-    config: Optional[RemoteConfig] = None,
-    timeout: float = 2.0,
-    verbose: bool = False,
-    try_alternates: bool = True
+    config: Optional[RemoteConfig] = None, timeout: float = 2.0, verbose: bool = False, try_alternates: bool = True
 ) -> bool:
     """
     Check if remote server is available for detection.
@@ -2002,7 +2083,7 @@ def is_remote_available(
             result = sock.connect_ex((host, port))
             sock.close()
 
-            is_available = (result == 0)
+            is_available = result == 0
 
             if is_available:
                 if verbose:
@@ -2015,6 +2096,7 @@ def is_remote_available(
                 # Connection failed - print error if verbose
                 if verbose:
                     import errno
+
                     error_msg = errno.errorcode.get(result, f"error {result}")
                     print(f"✗ Connection failed: {error_msg}")
                 continue
@@ -2033,16 +2115,14 @@ def is_remote_available(
     # All combinations failed
     if verbose:
         if len(combinations) > 1:
-            print(f"✗ Remote is not reachable on any endpoint")
+            print("✗ Remote is not reachable on any endpoint")
         else:
             print(f"✗ Remote is not reachable: {config.user}@{config.host}:{config.port}")
     return False
 
 
 def get_remote_endpoint(
-    config: Optional[RemoteConfig] = None,
-    timeout: float = 2.0,
-    verbose: bool = False
+    config: Optional[RemoteConfig] = None, timeout: float = 2.0, verbose: bool = False
 ) -> Optional[RemoteConfig]:
     """
     Get working remote endpoint configuration.
