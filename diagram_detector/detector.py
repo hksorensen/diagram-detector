@@ -21,6 +21,11 @@ from .utils import (
 )
 
 import logging
+import warnings
+
+# Filter out torch warnings that pollute logs
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=UserWarning, module='torch')
 logger = logging.getLogger(__name__)
 
 class DiagramDetector:
