@@ -697,29 +697,47 @@ class PDFRemoteDetector:
         if result.returncode != 0:
             raise RuntimeError(f"Failed to download remote results: {result.stderr}")
 
-        # Parse results from downloaded files
+        # Parse results from single detections.json file
+        detections_file = local_output_dir / "detections.json"
         results_dict = {}
-        for pdf in pdfs_on_remote:
-            # Results should be in JSON format
-            result_file = local_output_dir / f"{pdf.stem}.json"
 
-            if result_file.exists():
-                with open(result_file) as f:
-                    result_data = json.load(f)
-                    # Convert to DetectionResult objects
-                    from .models import DetectionResult, DiagramDetection
+        if detections_file.exists():
+            with open(detections_file) as f:
+                all_results = json.load(f)
 
-                    results = [
-                        DetectionResult(
-                            filename=r["filename"],
-                            page_number=r["page_number"],
-                            detections=[DiagramDetection(**det) for det in r.get("detections", [])],
+            # Convert to DetectionResult objects and group by PDF
+            import re
+
+            from .models import DetectionResult, DiagramDetection
+
+            # Group results by PDF stem (extract from image filename)
+            for pdf in pdfs_on_remote:
+                pdf_stem = pdf.stem
+                # Find all results for this PDF (images like "pdfname_page_0001.jpg")
+                pdf_results = []
+
+                for img_result in all_results:
+                    img_name = img_result["filename"]
+                    # Extract PDF stem and page number from image filename
+                    # Format: "pdfname_page_0001.jpg"
+                    match = re.match(r"(.+)_page_(\d+)\.jpg$", img_name)
+                    if match and match.group(1) == pdf_stem:
+                        page_num = int(match.group(2))
+                        pdf_results.append(
+                            DetectionResult(
+                                filename=img_name,
+                                page_number=page_num,
+                                detections=[DiagramDetection(**det) for det in img_result.get("detections", [])],
+                            )
                         )
-                        for r in result_data
-                    ]
-                    results_dict[pdf.name] = results
-            else:
-                logger.warning(f"No results found for {pdf.name}")
+
+                if not pdf_results:
+                    logger.warning(f"No results found for {pdf.name}")
+
+                results_dict[pdf.name] = pdf_results
+        else:
+            logger.error(f"detections.json not found in {local_output_dir}")
+            for pdf in pdfs_on_remote:
                 results_dict[pdf.name] = []
 
         processing_time = time.time() - start_time
