@@ -723,11 +723,24 @@ class PDFRemoteDetector:
                     match = re.match(r"(.+)_page_(\d+)\.jpg$", img_name)
                     if match and match.group(1) == pdf_stem:
                         page_num = int(match.group(2))
+
+                        # Convert detection format to match DiagramDetection model
+                        detections = []
+                        for det in img_result.get("detections", []):
+                            detections.append(
+                                DiagramDetection(
+                                    bbox=tuple(det["bbox"]),
+                                    confidence=det["confidence"],
+                                    class_id=int(det.get("class", 0)),
+                                    class_name="diagram",
+                                )
+                            )
+
                         pdf_results.append(
                             DetectionResult(
                                 filename=img_name,
                                 page_number=page_num,
-                                detections=[DiagramDetection(**det) for det in img_result.get("detections", [])],
+                                detections=detections,
                             )
                         )
 
