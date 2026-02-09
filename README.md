@@ -138,6 +138,47 @@ def process_paper(pdf_path):
         # ... process crop
 ```
 
+### Controlling Detection Order
+
+**By design, `diagram-detector` does not sort files alphabetically.** Order is controlled explicitly by the caller:
+
+**For images (Python API):**
+```python
+from pathlib import Path
+
+# If order doesn't matter (most cases):
+results = detector.detect('my_images/')  # Uses filesystem order
+
+# If order matters (specify explicitly):
+ordered_images = [
+    Path('first.jpg'),
+    Path('second.jpg'),
+    Path('third.jpg'),
+]
+results = detector.detect(ordered_images)  # Processes in exact order provided
+```
+
+**For PDFs (pipeline workflows):**
+```python
+# Use a priority list to control processing order
+with open('priority_list.txt', 'w') as f:
+    f.write('important_paper.pdf\n')
+    f.write('another_paper.pdf\n')
+    f.write('third_paper.pdf\n')
+
+# Load and process in priority order
+pdf_paths = [Path('pdfs') / name.strip()
+             for name in open('priority_list.txt')]
+results = detector.detect_pdfs(pdf_paths)
+```
+
+**Why no automatic sorting?**
+- **Explicit is better than implicit:** If order matters, specify it in your input
+- **Preserves existing order:** For remote workflows, maintains upload order from rsync
+- **No surprises:** Filesystem order is returned as-is without hidden transformations
+
+For standalone CLI use, order typically doesn't matter since each image/page is processed independently and results are keyed by filename.
+
 ### Remote GPU Inference
 
 Process large batches on a remote GPU server via SSH:
