@@ -314,6 +314,7 @@ class PDFRemoteDetector:
         max_pdf_size_pages: Optional[int] = None,
         use_persistent_server: bool = False,
         remote_cleanup: bool = False,
+        pdfs_on_remote: bool = False,  # PDFs already on remote (skip extraction)
     ):
         """
         Initialize PDF remote detector.
@@ -362,6 +363,7 @@ class PDFRemoteDetector:
         self.max_pdf_size_mb = max_pdf_size_mb
         self.max_pdf_size_pages = max_pdf_size_pages
         self.remote_cleanup = remote_cleanup
+        self.pdfs_on_remote = pdfs_on_remote  # Skip extraction if PDFs already on remote
 
         self.tensorrt = tensorrt
 
@@ -691,11 +693,12 @@ class PDFRemoteDetector:
         batch_failed: Dict[str, str] = {}
 
         # Check if PDFs are already on remote (optimization to skip extraction+upload)
-        remote_pdf_base = os.environ.get('REMOTE_PDF_BASE_DIR')
-        pdfs_on_remote = []
+        pdfs_on_remote_list = []
         pdfs_need_extraction = []
 
-        if remote_pdf_base:
+        if self.pdfs_on_remote:
+            # PDFs stored on remote via storage backend - check which ones exist
+            remote_pdf_base = "~/diagrams_in_arxiv/pdfs"
             # Split batch into PDFs on remote vs need extraction
             if self.verbose:
                 print(f"  Checking which PDFs are already on remote...")
@@ -719,13 +722,13 @@ class PDFRemoteDetector:
 
                 for pdf in pdf_batch:
                     if pdf.name in found_names:
-                        pdfs_on_remote.append(pdf)
+                        pdfs_on_remote_list.append(pdf)
                     else:
                         pdfs_need_extraction.append(pdf)
 
-                if self.verbose and pdfs_on_remote:
-                    saved_pct = 100 * len(pdfs_on_remote) / len(pdf_batch)
-                    print(f"  ✓ {len(pdfs_on_remote)}/{len(pdf_batch)} PDFs already on remote ({saved_pct:.0f}% skip extraction+upload)")
+                if self.verbose and pdfs_on_remote_list:
+                    saved_pct = 100 * len(pdfs_on_remote_list) / len(pdf_batch)
+                    print(f"  ✓ {len(pdfs_on_remote_list)}/{len(pdf_batch)} PDFs already on remote ({saved_pct:.0f}% skip extraction+upload)")
 
             except (subprocess.TimeoutExpired, Exception) as e:
                 logger.warning(f"Failed to check remote PDFs: {e}, will extract all locally")
@@ -743,11 +746,11 @@ class PDFRemoteDetector:
 
         # Process PDFs that are already on remote (extract and detect remotely)
         remote_results = {}
-        if pdfs_on_remote:
-            logger.info(f"Processing {len(pdfs_on_remote)} PDFs directly on remote (skip extraction+upload)")
+        if pdfs_on_remote_list:
+            logger.info(f"Processing {len(pdfs_on_remote_list)} PDFs directly on remote (skip extraction+upload)")
             try:
                 remote_results, remote_time = self._process_remote_pdfs(
-                    pdfs_on_remote,
+                    pdfs_on_remote_list,
                     remote_pdf_base,
                     batch_id,
                     gpu_batch_size
@@ -755,9 +758,9 @@ class PDFRemoteDetector:
                 logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
             except Exception as e:
                 logger.error(f"Remote PDF processing failed: {e}")
-                logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote)} PDFs")
+                logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote_list)} PDFs")
                 # Fall back to local extraction
-                fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote, batch_dir)
+                fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote_list, batch_dir)
                 pdf_images.update(fallback_images)
                 extraction_time += fallback_time
 
