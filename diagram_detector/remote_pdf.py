@@ -688,7 +688,7 @@ class PDFRemoteDetector:
         # Download results directory
         rsync_cmd = (
             ["rsync", "-avz", "--timeout=300"]
-            + self.remote_detector.config.ssh_port_args
+            + self.remote_detector.config.rsync_ssh_args
             + [f"{self.remote_detector.config.ssh_target}:{remote_output_dir}/", str(local_output_dir) + "/"]
         )
 
