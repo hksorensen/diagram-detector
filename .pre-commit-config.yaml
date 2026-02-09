@@ -1,0 +1,47 @@
+# Pre-commit hooks for diagram-detector
+# Run automatically before each git commit to catch simple errors
+#
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+# Update hooks: pre-commit autoupdate
+
+repos:
+  # Ruff: Fast Python linter (replaces flake8, isort, etc.)
+  # Catches: unused imports, undefined names, syntax errors, style issues
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # Run linter
+      - id: ruff
+        args: [--fix]  # Automatically fix issues when possible
+
+      # Run formatter (optional, like black)
+      - id: ruff-format
+
+  # Mypy: Static type checker
+  # Catches: wrong argument types, missing attributes, function signature mismatches
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports, --warn-unused-ignores]
+        additional_dependencies: [types-PyYAML, types-requests]
+        # Only check .py files (not test files for now)
+        files: ^diagram_detector/.*\.py$
+        exclude: ^tests/
+
+  # Basic checks (built-in)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Check for merge conflict markers
+      - id: check-merge-conflict
+      # Check YAML syntax
+      - id: check-yaml
+      # Trim trailing whitespace
+      - id: trailing-whitespace
+      # Ensure files end with newline
+      - id: end-of-file-fixer
+      # Check for large files (>500KB)
+      - id: check-added-large-files
+        args: [--maxkb=500]
