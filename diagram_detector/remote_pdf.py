@@ -671,11 +671,23 @@ class PDFRemoteDetector:
         if not remote_pdf_paths:
             raise RuntimeError(f"No PDFs found on remote in {remote_pdf_base}/{{published,arxiv}}/")
 
+        # DETAILED LOGGING: Show what we found
+        logger.info(f"[REMOTE PDF CHECK] Base directory: {remote_pdf_base}")
+        logger.info(f"[REMOTE PDF CHECK] Found {len(remote_pdf_paths)} PDFs on remote")
+        logger.info(f"[REMOTE PDF CHECK] First 3 paths: {remote_pdf_paths[:3]}")
+        logger.info(f"[REMOTE PDF CHECK] Last 3 paths: {remote_pdf_paths[-3:]}")
         logger.info(f"Processing {len(remote_pdf_paths)} PDFs directly on remote (no upload needed)")
 
         # Start persistent server if not running
         if not self.remote_detector._server_proc:
             self.remote_detector._start_persistent_server()
+
+        # DETAILED LOGGING: Before calling persistent server
+        logger.info(f"[PERSISTENT SERVER] Sending {len(remote_pdf_paths)} PDF paths to server")
+        logger.info(f"[PERSISTENT SERVER] Batch ID: {batch_id}")
+        logger.info("[PERSISTENT SERVER] Sample paths being sent:")
+        for i, path in enumerate(remote_pdf_paths[:5]):
+            logger.info(f"[PERSISTENT SERVER]   [{i}] {path}")
 
         # Run inference using SSHRemoteDetector's infrastructure
         self.remote_detector._run_inference_pdfs(remote_pdf_paths, batch_id)
@@ -684,6 +696,10 @@ class PDFRemoteDetector:
         remote_output_dir = f"{self.remote_detector.config.remote_work_dir}/output/{batch_id}"
         local_output_dir = self.work_dir / f"remote_results_{batch_id}"
         local_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # DETAILED LOGGING: Download info
+        logger.info(f"[DOWNLOAD RESULTS] Remote output: {remote_output_dir}")
+        logger.info(f"[DOWNLOAD RESULTS] Local output: {local_output_dir}")
 
         # Download results directory
         rsync_cmd = (
@@ -697,20 +713,47 @@ class PDFRemoteDetector:
         if result.returncode != 0:
             raise RuntimeError(f"Failed to download remote results: {result.stderr}")
 
+        # DETAILED LOGGING: What did we download?
+        downloaded_files = list(local_output_dir.glob("*"))
+        logger.info(f"[DOWNLOAD RESULTS] Downloaded {len(downloaded_files)} files")
+        logger.info(f"[DOWNLOAD RESULTS] Files: {[f.name for f in downloaded_files]}")
+
         # Parse results from single detections.json file
         detections_file = local_output_dir / "detections.json"
         results_dict = {}
 
         if detections_file.exists():
+            detections_size = detections_file.stat().st_size
+            logger.info(f"[PARSE RESULTS] detections.json exists, size: {detections_size} bytes")
+
             with open(detections_file) as f:
                 all_results = json.load(f)
+
+            # DETAILED LOGGING: What's in the JSON?
+            logger.info(f"[PARSE RESULTS] Total image results in JSON: {len(all_results)}")
+            if all_results:
+                unique_pdfs = set()
+                for img_result in all_results:
+                    filename = img_result.get("filename", "")
+                    if "_page_" in filename:
+                        pdf_stem = filename.split("_page_")[0]
+                        unique_pdfs.add(pdf_stem)
+                logger.info(f"[PARSE RESULTS] Unique PDF stems in JSON: {len(unique_pdfs)}")
+                logger.info(f"[PARSE RESULTS] PDF stems: {sorted(unique_pdfs)[:10]}")
+                logger.info(f"[PARSE RESULTS] First 3 filenames: {[r.get('filename') for r in all_results[:3]]}")
+                logger.info(f"[PARSE RESULTS] Last 3 filenames: {[r.get('filename') for r in all_results[-3:]]}")
 
             # Convert to DetectionResult objects and group by PDF
             import re
 
             from .models import DetectionResult, DiagramDetection
 
+            # DETAILED LOGGING: Matching setup
+            logger.info(f"[MATCHING] Trying to match {len(pdfs_on_remote)} PDFs to {len(all_results)} image results")
+            logger.info(f"[MATCHING] First 5 PDF stems to match: {[p.stem for p in pdfs_on_remote[:5]]}")
+
             # Group results by PDF stem (extract from image filename)
+            match_count = 0
             for pdf in pdfs_on_remote:
                 pdf_stem = pdf.stem
                 # Find all results for this PDF (images like "pdfname_page_0001.jpg")
@@ -746,8 +789,23 @@ class PDFRemoteDetector:
 
                 if not pdf_results:
                     logger.warning(f"No results found for {pdf.name}")
+                else:
+                    match_count += 1
 
                 results_dict[pdf.name] = pdf_results
+
+            # DETAILED LOGGING: Matching results
+            logger.info(f"[MATCHING] Successfully matched {match_count}/{len(pdfs_on_remote)} PDFs")
+            logger.info(f"[MATCHING] PDFs with no results: {len(pdfs_on_remote) - match_count}")
+
+            # DETAILED LOGGING: Check if we can write to detections.json (verify permissions)
+            try:
+                test_write = detections_file.parent / "test_write.tmp"
+                test_write.write_text("test")
+                test_write.unlink()
+                logger.info(f"[FILE ACCESS] Can write to {detections_file.parent}")
+            except Exception as e:
+                logger.warning(f"[FILE ACCESS] Cannot write to {detections_file.parent}: {e}")
         else:
             logger.error(f"detections.json not found in {local_output_dir}")
             for pdf in pdfs_on_remote:
