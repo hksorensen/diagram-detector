@@ -1099,18 +1099,19 @@ class SSHRemoteDetector:
                     print(f"  ✓ Upload complete: {num_files} files in {upload_time:.1f}s ({num_files/upload_time:.1f} files/s)")
 
             # Verify upload - check file count and sizes on remote
-            # First: count files
+            # First: count files (expect images + manifest.txt)
             count_cmd = f"ls {remote_input} | wc -l"
             result = self._run_ssh_command(count_cmd, check=False)
             if result.returncode == 0:
                 remote_count = int(result.stdout.strip())
-                logger.info(f"[UPLOAD] Upload verification: {remote_count} files in {remote_input} (expected {len(image_paths)})")
-                if remote_count != len(image_paths):
-                    logger.error(f"[UPLOAD] MISMATCH: Only {remote_count}/{len(image_paths)} files uploaded!")
+                expected_count = len(image_paths) + 1  # +1 for manifest.txt
+                logger.info(f"[UPLOAD] Upload verification: {remote_count} files in {remote_input} (expected {expected_count}: {len(image_paths)} images + manifest.txt)")
+                if remote_count != expected_count:
+                    logger.error(f"[UPLOAD] MISMATCH: Found {remote_count} files, expected {expected_count}!")
                     # List what files are actually there
                     ls_result = self._run_ssh_command(f"ls -la {remote_input}", check=False)
                     logger.error(f"[UPLOAD] Remote directory contents:\n{ls_result.stdout}")
-                    raise RuntimeError(f"Upload verification failed: expected {len(image_paths)} files, found {remote_count}")
+                    raise RuntimeError(f"Upload verification failed: expected {expected_count} files (images + manifest), found {remote_count}")
 
                 # Second: verify file sizes match
                 logger.info(f"[UPLOAD] Verifying file sizes...")
