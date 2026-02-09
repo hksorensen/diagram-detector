@@ -9,21 +9,19 @@ Optimized for:
 - Local PDF → image extraction (less network traffic)
 """
 
-from pathlib import Path
-from typing import List, Union, Optional, Dict
-import tempfile
-import shutil
-import time
 import csv
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import shutil
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 from .models import DetectionResult
-from .utils import convert_pdf_to_images, save_json
 from .remote_ssh import RemoteConfig, SSHRemoteDetector
-from .cache import DetectionCache
-from .diagnostic_logger import diagnostic
+from .utils import convert_pdf_to_images, save_json
 
 
 def _append_timing_to_csv(
@@ -83,30 +81,30 @@ def _append_timing_to_csv(
 
     # Prepare row
     row = {
-        'timestamp': timestamp.isoformat(),
-        'num_pdfs': num_pdfs,
-        'num_pages': num_pages,
-        'num_detections': num_detections,
-        'detections_per_page': round(detections_per_page, 3),
-        'num_cached': num_cached,
-        'extraction_time': round(extraction_time, 2),
-        'inference_time': round(inference_time, 2),
-        'total_time': round(total_time, 2),
-        'pages_per_sec': round(pages_per_sec, 2),
-        'extraction_pct': round(extraction_pct, 1),
-        'inference_pct': round(inference_pct, 1),
-        'model': model,
-        'batch_size': batch_size,
-        'image_batch_size': image_batch_size,
-        'max_workers': max_workers,
-        'tensorrt': tensorrt,
-        'remote_host': remote_host,
-        'gpu_mem_used_mb': gpu_mem_used_mb,
-        'gpu_mem_free_mb': gpu_mem_free_mb,
+        "timestamp": timestamp.isoformat(),
+        "num_pdfs": num_pdfs,
+        "num_pages": num_pages,
+        "num_detections": num_detections,
+        "detections_per_page": round(detections_per_page, 3),
+        "num_cached": num_cached,
+        "extraction_time": round(extraction_time, 2),
+        "inference_time": round(inference_time, 2),
+        "total_time": round(total_time, 2),
+        "pages_per_sec": round(pages_per_sec, 2),
+        "extraction_pct": round(extraction_pct, 1),
+        "inference_pct": round(inference_pct, 1),
+        "model": model,
+        "batch_size": batch_size,
+        "image_batch_size": image_batch_size,
+        "max_workers": max_workers,
+        "tensorrt": tensorrt,
+        "remote_host": remote_host,
+        "gpu_mem_used_mb": gpu_mem_used_mb,
+        "gpu_mem_free_mb": gpu_mem_free_mb,
     }
 
     # Write to CSV
-    with open(log_path, 'a', newline='') as f:
+    with open(log_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=row.keys())
 
         # Write header if new file
@@ -130,6 +128,7 @@ def _copy_inference_logs(
     Target: preserve_logs_dir / pdf_batch_id / <sub_batch_id> / inference.log|.err
     """
     import logging
+
     _log = logging.getLogger(__name__)
 
     # Check if results directory exists at all (may not if all PDFs failed extraction)
@@ -138,7 +137,7 @@ def _copy_inference_logs(
         _log.debug(
             "Preserve logs: batch_dir/results does not exist (no inference was run for %s). "
             "This is normal if all PDFs in the batch failed extraction.",
-            pdf_batch_id
+            pdf_batch_id,
         )
         return
 
@@ -212,18 +211,18 @@ def _log_pdf_status(
 
     # Prepare row
     row = {
-        'pdf_name': pdf_name,
-        'status': status,
-        'pages_extracted': pages_extracted,
-        'pages_detected': pages_detected,
-        'num_diagrams': num_diagrams,
-        'error_type': error_type,
-        'error_message': error_message,
-        'timestamp': datetime.now().isoformat(),
+        "pdf_name": pdf_name,
+        "status": status,
+        "pages_extracted": pages_extracted,
+        "pages_detected": pages_detected,
+        "num_diagrams": num_diagrams,
+        "error_type": error_type,
+        "error_message": error_message,
+        "timestamp": datetime.now().isoformat(),
     }
 
     # Write to CSV with file locking
-    with open(manifest_path, 'a', newline='') as f:
+    with open(manifest_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=row.keys())
 
         # Write header if new file
@@ -252,8 +251,9 @@ def extract_pdf_to_jpegs(pdf_path: Path, output_dir: Path, dpi: int, show_progre
     Raises:
         Any exception from PyMuPDF / PIL propagates to the caller.
     """
-    from PIL import Image
     import shutil
+
+    from PIL import Image
 
     images = convert_pdf_to_images(pdf_path, dpi=dpi, verbose=False, show_progress=show_progress)
 
@@ -391,6 +391,7 @@ class PDFRemoteDetector:
 
         # Work directory for remote PDF processing results (when PDFs already on remote)
         import tempfile
+
         self.work_dir = Path(tempfile.mkdtemp(prefix="remote_pdf_"))
 
         # if self.verbose:
@@ -419,16 +420,14 @@ class PDFRemoteDetector:
 
     def cleanup(self):
         """Clean up SSH control socket and connections."""
-        if hasattr(self, 'remote_detector') and self.remote_detector:
+        if hasattr(self, "remote_detector") and self.remote_detector:
             self.remote_detector.cleanup()
 
     def _extract_pdf_pages(self, pdf_path: Path, output_dir: Path) -> List[Path]:
         """Extract PDF pages to images locally (delegates to shared helper)."""
         return extract_pdf_to_jpegs(pdf_path, output_dir, self.dpi, show_progress=self.verbose)
 
-    def _extract_pdfs_parallel(
-        self, pdf_batch: List[Path], batch_dir: Path
-    ) -> tuple[Dict[str, List[Path]], float]:
+    def _extract_pdfs_parallel(self, pdf_batch: List[Path], batch_dir: Path) -> tuple[Dict[str, List[Path]], float]:
         """
         Extract multiple PDFs in parallel.
 
@@ -445,6 +444,7 @@ class PDFRemoteDetector:
             print(f"  Extracting {len(pdf_batch)} PDFs in parallel ({self.max_workers} workers)...")
 
         import logging
+
         logger = logging.getLogger(__name__)
         logger.debug(f"[EXTRACTION] Starting extraction of {len(pdf_batch)} PDFs")
 
@@ -455,15 +455,20 @@ class PDFRemoteDetector:
             for pdf_path in pdf_batch:
                 pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
                 if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
-                    logger.warning(f"SKIPPING large PDF: {pdf_path.name} ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB")
+                    logger.warning(
+                        f"SKIPPING large PDF: {pdf_path.name} ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
+                    )
                     pdf_images[pdf_path.name] = None
                     continue
                 if self.max_pdf_size_pages is not None:
                     import fitz
+
                     with fitz.open(pdf_path) as doc:
                         num_pages = doc.page_count
                     if num_pages > self.max_pdf_size_pages:
-                        logger.warning(f"SKIPPING large PDF: {pdf_path.name} ({num_pages} pages) exceeds limit of {self.max_pdf_size_pages} pages")
+                        logger.warning(
+                            f"SKIPPING large PDF: {pdf_path.name} ({num_pages} pages) exceeds limit of {self.max_pdf_size_pages} pages"
+                        )
                         pdf_images[pdf_path.name] = None
                         continue
                 pdf_dir = batch_dir / pdf_path.stem
@@ -494,6 +499,7 @@ class PDFRemoteDetector:
                     # Check if PDF exceeds page limit (page_count reads only trailer — ~0.1 ms)
                     if self.max_pdf_size_pages is not None:
                         import fitz
+
                         with fitz.open(pdf_path) as doc:
                             num_pages = doc.page_count
                         if num_pages > self.max_pdf_size_pages:
@@ -509,18 +515,26 @@ class PDFRemoteDetector:
                     future = executor.submit(self._extract_pdf_pages, pdf_path, pdf_dir)
                     futures_in_order.append((future, pdf_path))
 
-                logger.debug(f"[EXTRACTION] Submitted {len(futures_in_order)} extraction tasks, skipped {len(skipped_pdfs)} large PDFs")
+                logger.debug(
+                    f"[EXTRACTION] Submitted {len(futures_in_order)} extraction tasks, skipped {len(skipped_pdfs)} large PDFs"
+                )
 
                 # CRITICAL FIX: Wait for results in submission order (pdf_batch order)
                 # Do NOT use as_completed() which returns in completion order!
                 from tqdm import tqdm
+
                 completed_count = 0
                 total_pages = 0
                 extraction_start_time = time.time()
 
                 if self.verbose:
-                    progress = tqdm(total=len(futures_in_order), desc="  Extracting", unit="PDF", leave=False,
-                                    bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}]')
+                    progress = tqdm(
+                        total=len(futures_in_order),
+                        desc="  Extracting",
+                        unit="PDF",
+                        leave=False,
+                        bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}]",
+                    )
 
                 for future, pdf_path in futures_in_order:
                     try:
@@ -540,6 +554,7 @@ class PDFRemoteDetector:
                     except Exception as e:
                         # CRITICAL: Log full exception for debugging
                         import traceback
+
                         logger.error(f"PDF extraction FAILED for {pdf_path.name}")
                         logger.error(f"  Error: {type(e).__name__}: {e}")
                         logger.error(f"  PDF path: {pdf_path}")
@@ -569,21 +584,21 @@ class PDFRemoteDetector:
         # Log extraction summary
         total_pages_extracted = sum(len(imgs) if imgs else 0 for imgs in pdf_images.values() if imgs is not None)
         failed_pdfs = sum(1 for imgs in pdf_images.values() if imgs is None)
-        logger.debug(f"[EXTRACTION] Complete: {len(pdf_images)} PDFs, {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)")
+        logger.debug(
+            f"[EXTRACTION] Complete: {len(pdf_images)} PDFs, {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)"
+        )
         if failed_pdfs > 0:
             logger.warning(f"[EXTRACTION] {failed_pdfs}/{len(pdf_images)} PDFs failed extraction")
 
         if self.verbose:
-            print(f"  ✓ Extraction complete: {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)")
+            print(
+                f"  ✓ Extraction complete: {total_pages_extracted} pages in {extraction_time:.1f}s ({total_pages_extracted/extraction_time:.1f} pages/s)"
+            )
 
         return pdf_images, extraction_time
 
     def _process_remote_pdfs(
-        self,
-        pdfs_on_remote: List[Path],
-        remote_pdf_base: str,
-        batch_id: str,
-        gpu_batch_size: int = 32
+        self, pdfs_on_remote: List[Path], remote_pdf_base: str, batch_id: str, gpu_batch_size: int = 32
     ) -> tuple[Dict[str, List[DetectionResult]], float]:
         """
         Process PDFs that are already on remote server.
@@ -602,9 +617,10 @@ class PDFRemoteDetector:
             results_dict: {pdf_filename: [DetectionResult, ...]}
         """
         import json
-        import time
         import logging
         import subprocess
+        import time
+
         logger = logging.getLogger(__name__)
 
         start_time = time.time()
@@ -614,7 +630,6 @@ class PDFRemoteDetector:
         remote_pdf_paths = []
 
         # Check subdirectory for all PDFs in a single SSH command (much faster than per-PDF)
-        import subprocess
 
         # Build a single command that checks all PDFs and outputs their subdirectory
         check_commands = []
@@ -629,22 +644,22 @@ class PDFRemoteDetector:
             )
 
         combined_check = "; ".join(check_commands)
-        ssh_cmd = [
-            "ssh", "-p", str(self.remote_detector.config.port),
-            f"{self.remote_detector.config.user}@{self.remote_detector.config.host}",
-            combined_check
-        ]
+        ssh_cmd = (
+            ["ssh"]
+            + self.remote_detector.config.ssh_port_args
+            + [self.remote_detector.config.ssh_target, combined_check]
+        )
 
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
             # Parse output: each line is "subdir:filename"
-            for line in result.stdout.strip().split('\n'):
-                if line and ':' in line:
-                    subdir, filename = line.split(':', 1)
+            for line in result.stdout.strip().split("\n"):
+                if line and ":" in line:
+                    subdir, filename = line.split(":", 1)
                     remote_pdf_paths.append(f"{remote_pdf_base}/{subdir}/{filename}")
 
             # Warn about PDFs that weren't found
-            found_names = {line.split(':', 1)[1] for line in result.stdout.strip().split('\n') if line and ':' in line}
+            found_names = {line.split(":", 1)[1] for line in result.stdout.strip().split("\n") if line and ":" in line}
             for pdf in pdfs_on_remote:
                 if pdf.name not in found_names:
                     logger.warning(f"PDF not found in published/ or arxiv/: {pdf.name}")
@@ -671,12 +686,11 @@ class PDFRemoteDetector:
         local_output_dir.mkdir(parents=True, exist_ok=True)
 
         # Download results directory
-        rsync_cmd = [
-            "rsync", "-avz", "--timeout=300",
-            "-e", f"ssh -p {self.remote_detector.config.ssh_port} -o ConnectTimeout=10 -o ServerAliveInterval=60",
-            f"{self.remote_detector.config.ssh_target}:{remote_output_dir}/",
-            str(local_output_dir) + "/"
-        ]
+        rsync_cmd = (
+            ["rsync", "-avz", "--timeout=300"]
+            + self.remote_detector.config.ssh_port_args
+            + [f"{self.remote_detector.config.ssh_target}:{remote_output_dir}/", str(local_output_dir) + "/"]
+        )
 
         logger.debug(f"Downloading results from {remote_output_dir}")
         result = subprocess.run(rsync_cmd, capture_output=True, text=True)
@@ -694,13 +708,12 @@ class PDFRemoteDetector:
                     result_data = json.load(f)
                     # Convert to DetectionResult objects
                     from .models import DetectionResult, DiagramDetection
+
                     results = [
                         DetectionResult(
                             filename=r["filename"],
                             page_number=r["page_number"],
-                            detections=[
-                                DiagramDetection(**det) for det in r.get("detections", [])
-                            ]
+                            detections=[DiagramDetection(**det) for det in r.get("detections", [])],
                         )
                         for r in result_data
                     ]
@@ -714,9 +727,13 @@ class PDFRemoteDetector:
         return results_dict, processing_time
 
     def _process_pdf_batch(
-        self, pdf_batch: List[Path], batch_id: str, work_dir: Path,
-        auto_git_commit: bool = False, gpu_batch_size: int = 32,
-        manifest_path: Optional[Path] = None
+        self,
+        pdf_batch: List[Path],
+        batch_id: str,
+        work_dir: Path,
+        auto_git_commit: bool = False,
+        gpu_batch_size: int = 32,
+        manifest_path: Optional[Path] = None,
     ) -> tuple[Dict[str, List[DetectionResult]], float, float, int, int, Dict[str, str]]:
         """
         Process batch of PDFs.
@@ -732,7 +749,7 @@ class PDFRemoteDetector:
                       batch_failed dict mapping pdf_name to failure status)
         """
         import logging
-        import os
+
         logger = logging.getLogger(__name__)
 
         batch_dir = work_dir / batch_id
@@ -750,24 +767,23 @@ class PDFRemoteDetector:
             remote_pdf_base = "~/diagrams_in_arxiv/pdfs"
             # Split batch into PDFs on remote vs need extraction
             if self.verbose:
-                print(f"  Checking which PDFs are already on remote...")
+                print("  Checking which PDFs are already on remote...")
 
             # Check all PDFs in batch efficiently with one SSH call
             import subprocess
+
             check_commands = []
             for pdf in pdf_batch:
-                check_commands.append(f"([ -f {remote_pdf_base}/published/{pdf.name} ] || [ -f {remote_pdf_base}/arxiv/{pdf.name} ]) && echo '{pdf.name}' || true")
+                check_commands.append(
+                    f"([ -f {remote_pdf_base}/published/{pdf.name} ] || [ -f {remote_pdf_base}/arxiv/{pdf.name} ]) && echo '{pdf.name}' || true"
+                )
 
             combined_check = " && ".join(check_commands)
-            ssh_cmd = [
-                "ssh", "-p", str(self.config.port),
-                f"{self.config.user}@{self.config.host}",
-                combined_check
-            ]
+            ssh_cmd = ["ssh", "-p", str(self.config.port), f"{self.config.user}@{self.config.host}", combined_check]
 
             try:
                 result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-                found_names = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+                found_names = set(result.stdout.strip().split("\n")) if result.stdout.strip() else set()
 
                 for pdf in pdf_batch:
                     if pdf.name in found_names:
@@ -777,7 +793,9 @@ class PDFRemoteDetector:
 
                 if self.verbose and pdfs_on_remote_list:
                     saved_pct = 100 * len(pdfs_on_remote_list) / len(pdf_batch)
-                    print(f"  ✓ {len(pdfs_on_remote_list)}/{len(pdf_batch)} PDFs already on remote ({saved_pct:.0f}% skip extraction+upload)")
+                    print(
+                        f"  ✓ {len(pdfs_on_remote_list)}/{len(pdf_batch)} PDFs already on remote ({saved_pct:.0f}% skip extraction+upload)"
+                    )
 
             except (subprocess.TimeoutExpired, Exception) as e:
                 logger.warning(f"Failed to check remote PDFs: {e}, will extract all locally")
@@ -799,10 +817,7 @@ class PDFRemoteDetector:
             logger.info(f"Processing {len(pdfs_on_remote_list)} PDFs directly on remote (skip extraction+upload)")
             try:
                 remote_results, remote_time = self._process_remote_pdfs(
-                    pdfs_on_remote_list,
-                    remote_pdf_base,
-                    batch_id,
-                    gpu_batch_size
+                    pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size
                 )
                 logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
             except Exception as e:
@@ -827,12 +842,13 @@ class PDFRemoteDetector:
         # Log to contamination logger (silent, for monitoring)
         try:
             from diagrams_in_arxiv.contamination_logger import log_checkpoint
+
             log_checkpoint(
                 checkpoint=f"CHECKPOINT 2 (REMOTE batch {batch_id})",
                 status="PASS" if order_matches else "FAIL",
                 expected=pdf_batch_order,
                 actual=pdf_images_order,
-                details=f"After extraction (remote path), batch {batch_id}"
+                details=f"After extraction (remote path), batch {batch_id}",
             )
         except ImportError:
             pass
@@ -842,17 +858,17 @@ class PDFRemoteDetector:
             logger.debug(f"CHECKPOINT 2 PASS: Extraction order correct for batch {batch_id}")
         else:
             # FAIL: verbose (show details for debugging)
-            logger.error("="*70)
+            logger.error("=" * 70)
             logger.error(f"CHECKPOINT 2 FAIL: ORDER MISMATCH in batch {batch_id}")
-            logger.error("="*70)
+            logger.error("=" * 70)
             logger.error(f"  Expected (pdf_batch): {pdf_batch_order[:5]}")
             logger.error(f"  Actual (pdf_images):  {pdf_images_order[:5]}")
-            logger.error(f"  This will cause contamination - results assigned to wrong PDFs!")
-            logger.error("="*70)
+            logger.error("  This will cause contamination - results assigned to wrong PDFs!")
+            logger.error("=" * 70)
 
         # CRITICAL FIX: Iterate in pdf_batch order, not pdf_images.items() order!
         # This ensures all_images matches the order used for result slicing
-        logger.debug(f"Building all_images in pdf_batch order...")
+        logger.debug("Building all_images in pdf_batch order...")
         for pdf_path in pdf_batch:
             pdf_name = pdf_path.name
             if pdf_name not in pdf_images:
@@ -866,7 +882,9 @@ class PDFRemoteDetector:
                 pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
                 if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
                     # Skipped due to size limit
-                    logger.warning(f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                    logger.warning(
+                        f"Skipping {pdf_name} due to size limit ({pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)"
+                    )
                     batch_failed[pdf_name] = "size_limit_exceeded"
                     if manifest_path:
                         _log_pdf_status(
@@ -877,15 +895,18 @@ class PDFRemoteDetector:
                             pages_detected=0,
                             num_diagrams=0,
                             error_type="SizeLimitExceeded",
-                            error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB"
+                            error_message=f"PDF size ({pdf_size_mb:.1f} MB) exceeds limit of {self.max_pdf_size_mb} MB",
                         )
                 elif self.max_pdf_size_pages is not None:
                     # Check if skipped due to page limit (page count already read pre-extraction)
                     import fitz
+
                     with fitz.open(pdf_path) as doc:
                         num_pages = doc.page_count
                     if num_pages > self.max_pdf_size_pages:
-                        logger.warning(f"Skipping {pdf_name} due to page limit ({num_pages} pages > {self.max_pdf_size_pages} pages)")
+                        logger.warning(
+                            f"Skipping {pdf_name} due to page limit ({num_pages} pages > {self.max_pdf_size_pages} pages)"
+                        )
                         batch_failed[pdf_name] = "page_limit_exceeded"
                         if manifest_path:
                             _log_pdf_status(
@@ -896,7 +917,7 @@ class PDFRemoteDetector:
                                 pages_detected=0,
                                 num_diagrams=0,
                                 error_type="PageLimitExceeded",
-                                error_message=f"PDF has {num_pages} pages, exceeds limit of {self.max_pdf_size_pages} pages"
+                                error_message=f"PDF has {num_pages} pages, exceeds limit of {self.max_pdf_size_pages} pages",
                             )
                     else:
                         # Page limit set but this PDF is within limit — genuine extraction failure
@@ -911,7 +932,7 @@ class PDFRemoteDetector:
                                 pages_detected=0,
                                 num_diagrams=0,
                                 error_type="ExtractionFailure",
-                                error_message="PDF extraction returned None (exception occurred)"
+                                error_message="PDF extraction returned None (exception occurred)",
                             )
                 else:
                     # Extraction failed for other reason
@@ -926,7 +947,7 @@ class PDFRemoteDetector:
                             pages_detected=0,
                             num_diagrams=0,
                             error_type="ExtractionFailure",
-                            error_message="PDF extraction returned None (exception occurred)"
+                            error_message="PDF extraction returned None (exception occurred)",
                         )
 
                 continue
@@ -936,8 +957,8 @@ class PDFRemoteDetector:
                 # If convert_pdf_to_images returns [], it means the PDF had pages
                 # but all failed to render, which is very unusual
                 logger.error(f"UNEXPECTED: Extraction returned 0 pages for {pdf_name}")
-                logger.error(f"  This suggests all pages failed to render (very unusual)")
-                logger.error(f"  The PDF should have been caught earlier if it had 0 pages")
+                logger.error("  This suggests all pages failed to render (very unusual)")
+                logger.error("  The PDF should have been caught earlier if it had 0 pages")
 
                 batch_failed[pdf_name] = "extraction_failed"
                 if manifest_path:
@@ -949,7 +970,7 @@ class PDFRemoteDetector:
                         pages_detected=0,
                         num_diagrams=0,
                         error_type="ZeroPages",
-                        error_message="PDF extraction returned 0 pages (all pages failed to render)"
+                        error_message="PDF extraction returned 0 pages (all pages failed to render)",
                     )
                 continue
 
@@ -959,9 +980,9 @@ class PDFRemoteDetector:
                 if len(image_paths) > 0:
                     logger.debug(f"  Sample: {image_paths[0].name}")
                     # Verify image filename contains PDF stem
-                    expected_stem = pdf_name.rsplit('.', 1)[0]  # Remove .pdf extension
+                    expected_stem = pdf_name.rsplit(".", 1)[0]  # Remove .pdf extension
                     if expected_stem not in image_paths[0].name:
-                        logger.warning(f"  WARNING: Image name doesn't contain PDF stem!")
+                        logger.warning("  WARNING: Image name doesn't contain PDF stem!")
                         logger.warning(f"    PDF name: {pdf_name}")
                         logger.warning(f"    Expected stem: {expected_stem}")
                         logger.warning(f"    Image name: {image_paths[0].name}")
@@ -977,7 +998,7 @@ class PDFRemoteDetector:
         if len(all_images) > 0 and len(pdf_batch) > 0:
             # Build expected image sequence from first few PDFs
             expected_sequence = []
-            for pdf_path in pdf_batch[:min(3, len(pdf_batch))]:
+            for pdf_path in pdf_batch[: min(3, len(pdf_batch))]:
                 pdf_stem = pdf_path.stem
                 if pdf_path.name in pdf_page_counts:
                     page_count = pdf_page_counts[pdf_path.name]
@@ -985,36 +1006,39 @@ class PDFRemoteDetector:
                         expected_sequence.append(f"{pdf_stem}_page_{page_num:04d}.jpg")
 
             # Compare expected vs actual
-            actual_sequence = [img.name for img in all_images[:len(expected_sequence)]]
-            images_in_correct_order = (expected_sequence == actual_sequence)
+            actual_sequence = [img.name for img in all_images[: len(expected_sequence)]]
+            images_in_correct_order = expected_sequence == actual_sequence
 
             # Log to contamination logger (silent, for monitoring)
             try:
                 from diagrams_in_arxiv.contamination_logger import log_checkpoint
+
                 expected_summary = [f"{p.stem}_page_*" for p in pdf_batch[:3]]
-                actual_summary = [p.name for p in all_images[:min(20, len(all_images))]]
+                actual_summary = [p.name for p in all_images[: min(20, len(all_images))]]
                 log_checkpoint(
                     checkpoint=f"CHECKPOINT 3 (REMOTE batch {batch_id})",
                     status="PASS" if images_in_correct_order else "FAIL",
                     expected=expected_summary,
                     actual=actual_summary,
-                    details=f"After building all_images (remote path), batch {batch_id}, checked {len(expected_sequence)} images"
+                    details=f"After building all_images (remote path), batch {batch_id}, checked {len(expected_sequence)} images",
                 )
             except ImportError:
                 pass
 
             if images_in_correct_order:
                 # PASS: quiet (only log to file at DEBUG level)
-                logger.debug(f"CHECKPOINT 3 PASS: Image order correct for batch {batch_id} ({len(expected_sequence)} checked)")
+                logger.debug(
+                    f"CHECKPOINT 3 PASS: Image order correct for batch {batch_id} ({len(expected_sequence)} checked)"
+                )
             else:
                 # FAIL: verbose (show details for debugging)
-                logger.error("="*70)
+                logger.error("=" * 70)
                 logger.error(f"CHECKPOINT 3 FAIL: IMAGE ORDER MISMATCH in batch {batch_id}")
-                logger.error("="*70)
+                logger.error("=" * 70)
                 logger.error(f"  Expected: {expected_sequence[:10]}")
                 logger.error(f"  Actual:   {actual_sequence[:10]}")
-                logger.error(f"  This indicates manifest.txt was not used or is incorrect!")
-                logger.error("="*70)
+                logger.error("  This indicates manifest.txt was not used or is incorrect!")
+                logger.error("=" * 70)
 
         if self.verbose:
             print(f"  Running remote inference on {len(all_images)} images...")
@@ -1036,17 +1060,17 @@ class PDFRemoteDetector:
         # Validate inference returned correct number of results
         if len(results) != len(all_images):
             missing_count = len(all_images) - len(results)
-            logger.error(f"=" * 70)
+            logger.error("=" * 70)
             logger.error(f"INFERENCE MISMATCH IN BATCH {batch_id}")
-            logger.error(f"=" * 70)
+            logger.error("=" * 70)
             logger.error(f"Expected: {len(all_images)} results")
             logger.error(f"Received: {len(results)} results")
             logger.error(f"Missing:  {missing_count} results ({missing_count/len(all_images)*100:.1f}%)")
-            logger.error(f"")
+            logger.error("")
             logger.error(f"This indicates inference failed for {missing_count} images.")
-            logger.error(f"Check inference.err logs for details (likely OOM or model errors).")
-            logger.error(f"Affected PDFs in this batch will have incomplete or empty results.")
-            logger.error(f"=" * 70)
+            logger.error("Check inference.err logs for details (likely OOM or model errors).")
+            logger.error("Affected PDFs in this batch will have incomplete or empty results.")
+            logger.error("=" * 70)
 
         # Group results by PDF
         pdf_results = {}
@@ -1066,8 +1090,8 @@ class PDFRemoteDetector:
             # This should NEVER happen now - kept as defense-in-depth
             if num_pages == 0:
                 logger.error(f"CRITICAL BUG: {pdf_path.name} has pdf_page_counts = 0")
-                logger.error(f"  This should have been caught earlier in the pipeline!")
-                logger.error(f"  Please investigate why this PDF reached this point")
+                logger.error("  This should have been caught earlier in the pipeline!")
+                logger.error("  Please investigate why this PDF reached this point")
                 continue
 
             pdf_result_list = results[result_idx : result_idx + num_pages]
@@ -1080,17 +1104,19 @@ class PDFRemoteDetector:
 
             for page_idx, result in enumerate(pdf_result_list):
                 # Each result should have filename containing the PDF stem
-                if hasattr(result, 'filename') and result.filename:
+                if hasattr(result, "filename") and result.filename:
                     if expected_pdf_stem not in result.filename:
-                        filename_mismatches.append({
-                            'page_idx': page_idx,
-                            'expected_stem': expected_pdf_stem,
-                            'actual_filename': result.filename,
-                            'result_global_idx': result_idx + page_idx,
-                        })
+                        filename_mismatches.append(
+                            {
+                                "page_idx": page_idx,
+                                "expected_stem": expected_pdf_stem,
+                                "actual_filename": result.filename,
+                                "result_global_idx": result_idx + page_idx,
+                            }
+                        )
 
             if filename_mismatches:
-                logger.error(f"")
+                logger.error("")
                 logger.error(f"{'═' * 70}")
                 logger.error(f"CONTAMINATION DETECTED: Filename mismatch in batch {batch_id}")
                 logger.error(f"{'═' * 70}")
@@ -1098,7 +1124,7 @@ class PDFRemoteDetector:
                 logger.error(f"Expected stem: {expected_pdf_stem}")
                 logger.error(f"Result slice: [{result_idx}:{result_idx + num_pages}]")
                 logger.error(f"Mismatches found: {len(filename_mismatches)}/{num_pages} pages")
-                logger.error(f"")
+                logger.error("")
 
                 # Log first few mismatches for diagnosis
                 for mm in filename_mismatches[:5]:
@@ -1110,17 +1136,17 @@ class PDFRemoteDetector:
                 if len(filename_mismatches) > 5:
                     logger.error(f"  ... and {len(filename_mismatches) - 5} more")
 
-                logger.error(f"")
-                logger.error(f"This indicates the result slicing is incorrect!")
-                logger.error(f"Possible causes:")
-                logger.error(f"  - pdf_page_counts is wrong for earlier PDFs")
-                logger.error(f"  - pdf_batch iteration order changed")
-                logger.error(f"  - all_images order doesn't match pdf_batch order")
+                logger.error("")
+                logger.error("This indicates the result slicing is incorrect!")
+                logger.error("Possible causes:")
+                logger.error("  - pdf_page_counts is wrong for earlier PDFs")
+                logger.error("  - pdf_batch iteration order changed")
+                logger.error("  - all_images order doesn't match pdf_batch order")
                 logger.error(f"{'═' * 70}")
 
                 # Log forensic info for debugging
-                logger.debug(f"")
-                logger.debug(f"FORENSIC INFO:")
+                logger.debug("")
+                logger.debug("FORENSIC INFO:")
                 logger.debug(f"  Current PDF: {pdf_path.name}")
                 logger.debug(f"  Current result_idx: {result_idx}")
                 logger.debug(f"  Current num_pages: {num_pages}")
@@ -1138,7 +1164,7 @@ class PDFRemoteDetector:
                         pages_detected=len(pdf_result_list),
                         num_diagrams=sum(r.count for r in pdf_result_list),
                         error_type="FilenameMismatch",
-                        error_message=f"{len(filename_mismatches)}/{num_pages} pages have wrong filenames"
+                        error_message=f"{len(filename_mismatches)}/{num_pages} pages have wrong filenames",
                     )
 
                 # Skip this PDF - don't add to pdf_results (prevents caching)
@@ -1154,19 +1180,19 @@ class PDFRemoteDetector:
             # CRITICAL: Check if slice returned empty results
             # This happens when inference returned fewer results than expected
             if len(pdf_result_list) == 0:
-                logger.error(f"")
+                logger.error("")
                 logger.error(f"INFERENCE FAILURE: No results for {pdf_path.name}")
                 logger.error(f"  Pages extracted: {num_pages}")
-                logger.error(f"  Pages received:  0")
+                logger.error("  Pages received:  0")
                 logger.error(f"  Result index:    {result_idx} (expected results at this index)")
                 logger.error(f"  Total results:   {len(results)} (inference stopped before this PDF)")
-                logger.error(f"")
-                logger.error(f"  Likely causes:")
-                logger.error(f"    - Out of memory (OOM) during inference")
-                logger.error(f"    - Model crash on corrupt/unusual images")
-                logger.error(f"    - Remote process killed")
-                logger.error(f"")
-                logger.error(f"  This PDF will be reprocessed on next run")
+                logger.error("")
+                logger.error("  Likely causes:")
+                logger.error("    - Out of memory (OOM) during inference")
+                logger.error("    - Model crash on corrupt/unusual images")
+                logger.error("    - Remote process killed")
+                logger.error("")
+                logger.error("  This PDF will be reprocessed on next run")
 
                 batch_failed[pdf_path.name] = "inference_failed"
                 if manifest_path:
@@ -1178,7 +1204,7 @@ class PDFRemoteDetector:
                         pages_detected=0,
                         num_diagrams=0,
                         error_type="InferenceMismatch",
-                        error_message=f"Inference stopped before this PDF (expected at index {result_idx}, but only {len(results)} results total)"
+                        error_message=f"Inference stopped before this PDF (expected at index {result_idx}, but only {len(results)} results total)",
                     )
 
                 # Don't add to pdf_results - let it be reprocessed
@@ -1187,7 +1213,7 @@ class PDFRemoteDetector:
             # Check if inference returned fewer pages than expected
             if len(pdf_result_list) < num_pages:
                 logger.warning(f"PARTIAL RESULTS: {pdf_path.name} got {len(pdf_result_list)}/{num_pages} pages")
-                logger.warning(f"  Some pages failed inference")
+                logger.warning("  Some pages failed inference")
 
                 # Log partial result as inference_failed
                 batch_failed[pdf_path.name] = "inference_failed"
@@ -1201,7 +1227,7 @@ class PDFRemoteDetector:
                         pages_detected=len(pdf_result_list),
                         num_diagrams=total_diagrams,
                         error_type="PartialResults",
-                        error_message=f"Received {len(pdf_result_list)}/{num_pages} pages (some pages failed inference)"
+                        error_message=f"Received {len(pdf_result_list)}/{num_pages} pages (some pages failed inference)",
                     )
 
             # Add page numbers
@@ -1224,7 +1250,7 @@ class PDFRemoteDetector:
                     pages_detected=len(pdf_result_list),
                     num_diagrams=total_diagrams,
                     error_type="",
-                    error_message=""
+                    error_message="",
                 )
 
         # Query GPU memory after inference
@@ -1237,7 +1263,9 @@ class PDFRemoteDetector:
         logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
         logger.info(f"  Total:       {total_time:6.1f}s")
         logger.info(f"  Throughput:  {len(all_images)/total_time:.1f} pages/s")
-        logger.info(f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(r.count for page_results in pdf_results.values() for r in page_results)} diagrams")
+        logger.info(
+            f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(r.count for page_results in pdf_results.values() for r in page_results)} diagrams"
+        )
 
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
@@ -1274,6 +1302,10 @@ class PDFRemoteDetector:
         Returns:
             Dict mapping PDF filename to list of DetectionResult (one per page)
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         # Parse input
         if isinstance(pdf_paths, Path):
             if pdf_paths.is_dir():
@@ -1325,9 +1357,7 @@ class PDFRemoteDetector:
                     )
                 if cached is not None:
                     # Convert cached dicts back to DetectionResult objects
-                    cached_results[pdf_path.name] = [
-                        DetectionResult.from_dict(result_dict) for result_dict in cached
-                    ]
+                    cached_results[pdf_path.name] = [DetectionResult.from_dict(result_dict) for result_dict in cached]
                     # if self.verbose:
                     #     print(f"  ✓ {pdf_path.name} (cached)")
                 else:
@@ -1373,7 +1403,14 @@ class PDFRemoteDetector:
                     batch_dir = work_dir / batch_id
                     try:
                         # Process batch (detect() may raise on sub-batch mismatch; we still copy logs in finally)
-                        batch_results, batch_extraction_time, batch_inference_time, gpu_mem_used, gpu_mem_free, batch_failed = self._process_pdf_batch(
+                        (
+                            batch_results,
+                            batch_extraction_time,
+                            batch_inference_time,
+                            gpu_mem_used,
+                            gpu_mem_free,
+                            batch_failed,
+                        ) = self._process_pdf_batch(
                             batch_pdfs, batch_id, work_dir, auto_git_commit, gpu_batch_size, manifest_path
                         )
                         all_failed_pdfs.update(batch_failed)
@@ -1392,13 +1429,13 @@ class PDFRemoteDetector:
                     err_files = list(batch_dir.glob("**/inference.err"))
                     for err_file in err_files:
                         if err_file.stat().st_size > 0:
-                            logger.error(f"=" * 70)
+                            logger.error("=" * 70)
                             logger.error(f"REMOTE INFERENCE ERRORS - {err_file.parent.name}")
-                            logger.error(f"=" * 70)
-                            with open(err_file, 'r') as f:
+                            logger.error("=" * 70)
+                            with open(err_file, "r") as f:
                                 for line in f:
                                     logger.error(f"  {line.rstrip()}")
-                            logger.error(f"=" * 70)
+                            logger.error("=" * 70)
 
                     # Accumulate timing
                     total_extraction_time += batch_extraction_time
@@ -1410,22 +1447,28 @@ class PDFRemoteDetector:
                             # Skip failed PDFs (not in batch_results)
                             if pdf_path.name not in batch_results:
                                 import logging
+
                                 logger = logging.getLogger(__name__)
                                 pdf_size_mb = pdf_path.stat().st_size / 1024 / 1024
                                 if self.max_pdf_size_mb is not None and pdf_size_mb > self.max_pdf_size_mb:
-                                    logger.info(f"Not caching {pdf_path.name} - skipped (size limit: {pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)")
+                                    logger.info(
+                                        f"Not caching {pdf_path.name} - skipped (size limit: {pdf_size_mb:.1f} MB > {self.max_pdf_size_mb} MB)"
+                                    )
                                 elif self.max_pdf_size_pages is not None:
                                     import fitz
+
                                     with fitz.open(pdf_path) as doc:
                                         num_pages = doc.page_count
                                     if num_pages > self.max_pdf_size_pages:
-                                        logger.info(f"Not caching {pdf_path.name} - skipped (page limit: {num_pages} pages > {self.max_pdf_size_pages} pages)")
+                                        logger.info(
+                                            f"Not caching {pdf_path.name} - skipped (page limit: {num_pages} pages > {self.max_pdf_size_pages} pages)"
+                                        )
                                     else:
                                         logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
-                                        logger.warning(f"  This PDF will be reprocessed on next run")
+                                        logger.warning("  This PDF will be reprocessed on next run")
                                 else:
                                     logger.warning(f"⚠ Not caching {pdf_path.name} - extraction/inference failed")
-                                    logger.warning(f"  This PDF will be reprocessed on next run")
+                                    logger.warning("  This PDF will be reprocessed on next run")
                                 continue
 
                             # Convert DetectionResult objects to dicts for JSON serialization
@@ -1448,16 +1491,13 @@ class PDFRemoteDetector:
                     all_results.update(batch_results)
 
                     # Count detections in this batch
-                    batch_detections = sum(
-                        sum(r.count for r in results) for results in batch_results.values()
-                    )
+                    batch_detections = sum(sum(r.count for r in results) for results in batch_results.values())
 
                     if self.verbose:
                         # Calculate detailed statistics
                         batch_pages = sum(len(results) for results in batch_results.values())
                         pages_with_diagrams = sum(
-                            sum(1 for r in results if r.has_diagram)
-                            for results in batch_results.values()
+                            sum(1 for r in results if r.has_diagram) for results in batch_results.values()
                         )
                         pages_pct = (pages_with_diagrams / batch_pages * 100) if batch_pages > 0 else 0
                         avg_diagrams_per_page = batch_detections / batch_pages if batch_pages > 0 else 0
@@ -1469,14 +1509,16 @@ class PDFRemoteDetector:
                         # Show failure counts if any PDFs failed in this batch
                         if batch_failed:
                             n_extraction = sum(1 for s in batch_failed.values() if s == "extraction_failed")
-                            n_inference  = sum(1 for s in batch_failed.values() if s == "inference_failed")
+                            n_inference = sum(1 for s in batch_failed.values() if s == "inference_failed")
                             if n_extraction:
                                 print(f"  ⚠ Extraction failed: {n_extraction} PDF(s)")
                             if n_inference:
                                 print(f"  ⚠ Inference failed:  {n_inference} PDF(s)")
                             failed_names = list(batch_failed.keys())
-                            print(f"  Failed: {', '.join(failed_names[:10])}" +
-                                  (f" … +{len(failed_names)-10} more" if len(failed_names) > 10 else ""))
+                            print(
+                                f"  Failed: {', '.join(failed_names[:10])}"
+                                + (f" … +{len(failed_names)-10} more" if len(failed_names) > 10 else "")
+                            )
 
                         # Estimate remaining time
                         pdfs_processed = batch_end
@@ -1545,9 +1587,7 @@ class PDFRemoteDetector:
 
         # Print summary
         if self.verbose:
-            total_with_diagrams = sum(
-                sum(1 for r in results if r.has_diagram) for results in all_results.values()
-            )
+            total_with_diagrams = sum(sum(1 for r in results if r.has_diagram) for results in all_results.values())
 
             print(f"\n{'='*60}")
             print("PDF REMOTE INFERENCE COMPLETE")
@@ -1560,6 +1600,7 @@ class PDFRemoteDetector:
 
             # Calculate and show distribution of diagrams per page
             from collections import Counter
+
             diagram_counts = []
             confidences = []
             for results in all_results.values():
@@ -1570,7 +1611,7 @@ class PDFRemoteDetector:
                         confidences.extend([d.confidence for d in r.detections])
 
             count_dist = Counter(diagram_counts)
-            print(f"\nDiagram distribution per page:")
+            print("\nDiagram distribution per page:")
             for count in sorted(count_dist.keys()):
                 num_pages = count_dist[count]
                 pct = num_pages / total_pages * 100 if total_pages > 0 else 0
@@ -1581,7 +1622,7 @@ class PDFRemoteDetector:
                 avg_conf = sum(confidences) / len(confidences)
                 min_conf = min(confidences)
                 max_conf = max(confidences)
-                print(f"\nConfidence scores:")
+                print("\nConfidence scores:")
                 print(f"  Average: {avg_conf:.3f}")
                 print(f"  Range: {min_conf:.3f} - {max_conf:.3f}")
                 print(f"  Threshold: {self.confidence}")
@@ -1590,7 +1631,7 @@ class PDFRemoteDetector:
             max_diagrams = max(diagram_counts) if diagram_counts else 0
             if max_diagrams > 20:
                 print(f"\n⚠ WARNING: Found page(s) with {max_diagrams} diagrams")
-                print(f"  This may indicate false positives or threshold issues")
+                print("  This may indicate false positives or threshold issues")
 
             high_diagram_pages = [c for c in diagram_counts if c > 10]
             if high_diagram_pages:
@@ -1607,8 +1648,8 @@ class PDFRemoteDetector:
             if all_failed_pdfs:
                 total_processed = len(all_results) + len(all_failed_pdfs)
                 n_extraction = sum(1 for s in all_failed_pdfs.values() if s == "extraction_failed")
-                n_inference  = sum(1 for s in all_failed_pdfs.values() if s == "inference_failed")
-                print(f"\nFailure summary:")
+                n_inference = sum(1 for s in all_failed_pdfs.values() if s == "inference_failed")
+                print("\nFailure summary:")
                 print(f"  Successful:        {len(all_results):,} ({len(all_results)/total_processed*100:.1f}%)")
                 if n_extraction:
                     print(f"  Extraction failed: {n_extraction:,} ({n_extraction/total_processed*100:.1f}%)")
@@ -1621,10 +1662,10 @@ class PDFRemoteDetector:
         if all_failed_pdfs and manifest_path:
             failures_path = Path(manifest_path).parent / "detection_failures.txt"
             failures_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(failures_path, 'w') as f:
+            with open(failures_path, "w") as f:
                 f.write(f"# Detection failures — {datetime.now().isoformat()}\n")
                 f.write(f"# {len(all_failed_pdfs)} failed PDF(s)\n")
-                f.write(f"# status: extraction_failed | inference_failed\n\n")
+                f.write("# status: extraction_failed | inference_failed\n\n")
                 for pdf_name, status in sorted(all_failed_pdfs.items()):
                     f.write(f"{status}\t{pdf_name}\n")
             if self.verbose:
@@ -1662,9 +1703,7 @@ class PDFRemoteDetector:
 
         return all_results
 
-    def get_cached_results(
-        self, pdf_paths: Union[Path, List[Path]]
-    ) -> Dict[str, Optional[List[DetectionResult]]]:
+    def get_cached_results(self, pdf_paths: Union[Path, List[Path]]) -> Dict[str, Optional[List[DetectionResult]]]:
         """
         Retrieve cached results without processing.
 
@@ -1706,9 +1745,7 @@ class PDFRemoteDetector:
 
             if cached is not None:
                 # Convert cached dicts back to DetectionResult objects
-                results[pdf_path.name] = [
-                    DetectionResult.from_dict(result_dict) for result_dict in cached
-                ]
+                results[pdf_path.name] = [DetectionResult.from_dict(result_dict) for result_dict in cached]
             else:
                 results[pdf_path.name] = None
 
