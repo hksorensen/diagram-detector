@@ -618,8 +618,8 @@ class PDFRemoteDetector:
         for pdf in pdfs_on_remote:
             # Check both locations on remote
             check_cmd = [
-                "ssh", "-p", str(self.remote_detector.config.ssh_port),
-                f"{self.remote_detector.config.ssh_user}@{self.remote_detector.config.ssh_host}",
+                "ssh", "-p", str(self.remote_detector.config.port),
+                f"{self.remote_detector.config.user}@{self.remote_detector.config.host}",
                 f"if [ -f {remote_pdf_base}/published/{pdf.name} ]; then echo 'published/{pdf.name}'; "
                 f"elif [ -f {remote_pdf_base}/arxiv/{pdf.name} ]; then echo 'arxiv/{pdf.name}'; "
                 f"fi"
