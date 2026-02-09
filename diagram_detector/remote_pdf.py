@@ -913,12 +913,14 @@ class PDFRemoteDetector:
 
         # Process PDFs that are already on remote (extract and detect remotely)
         remote_results = {}
+        remote_processing_time = 0.0
         if pdfs_on_remote_list:
             logger.info(f"Processing {len(pdfs_on_remote_list)} PDFs directly on remote (skip extraction+upload)")
             try:
                 remote_results, remote_time = self._process_remote_pdfs(
                     pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size
                 )
+                remote_processing_time = remote_time
                 logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
             except Exception as e:
                 logger.error(f"Remote PDF processing failed: {e}")
@@ -1162,7 +1164,7 @@ class PDFRemoteDetector:
             # All PDFs processed remotely - no images to detect
             logger.info("No local images - all PDFs processed via remote persistent server")
             results = []
-            inference_time = 0.0
+            inference_time = remote_processing_time  # Use remote processing time
 
         # Validate inference returned correct number of results
         if len(results) != len(all_images):
