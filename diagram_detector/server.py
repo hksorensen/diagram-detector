@@ -178,7 +178,11 @@ def main():
 
                     # Extract all PDFs to temp directory
                     # CRITICAL: Each PDF gets its own subdirectory to prevent overwriting
-                    for pdf_path in pdf_paths:
+                    sys.stderr.write(f"[SERVER] Extracting {len(pdf_paths)} PDFs to {temp_path}\n")
+                    sys.stderr.flush()
+
+                    total_images = 0
+                    for idx, pdf_path in enumerate(pdf_paths):
                         if not pdf_path.exists():
                             raise FileNotFoundError(f"PDF not found on remote: {pdf_path}")
 
@@ -190,9 +194,25 @@ def main():
                         image_paths = extract_pdf_to_jpegs(pdf_path, pdf_output_dir, dpi=200, show_progress=False)
                         if not image_paths:
                             sys.stderr.write(f"Warning: No pages extracted from {pdf_path.name}\n")
+                        else:
+                            total_images += len(image_paths)
+
+                        # Progress every 20 PDFs
+                        if (idx + 1) % 20 == 0 or (idx + 1) == len(pdf_paths):
+                            sys.stderr.write(
+                                f"[SERVER] Extracted {idx + 1}/{len(pdf_paths)} PDFs ({total_images} images)\n"
+                            )
+                            sys.stderr.flush()
+
+                    sys.stderr.write(f"[SERVER] Extraction complete: {total_images} images in {temp_path}\n")
+                    sys.stderr.write(f"[SERVER] Starting detection on {temp_path}\n")
+                    sys.stderr.flush()
 
                     # Run detection on extracted images
                     results = detector.detect(temp_path, store_images=False)
+
+                    sys.stderr.write(f"[SERVER] Detection complete: {len(results)} results\n")
+                    sys.stderr.flush()
 
                     # Save results
                     detector.save_results(results, output_dir, format="json")
