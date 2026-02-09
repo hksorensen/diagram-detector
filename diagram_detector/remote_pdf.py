@@ -665,47 +665,35 @@ class PDFRemoteDetector:
         # ═══════════════════════════════════════════════════════════════════
         # CHECKPOINT 2: Verify extraction preserved pdf_batch order
         # ═══════════════════════════════════════════════════════════════════
-        diagnostic.info("="*70)
-        diagnostic.info(f"CHECKPOINT 2: After extraction (batch {batch_id})")
-        diagnostic.info("="*70)
-
         pdf_images_order = [name for name in pdf_images.keys()]
         pdf_batch_order = [p.name for p in pdf_batch if p.name in pdf_images]
+        order_matches = pdf_images_order == pdf_batch_order
 
-        diagnostic.info(f"  pdf_batch first 10: {[p.name for p in pdf_batch[:10]]}")
-        diagnostic.info(f"  pdf_images keys (first 10): {pdf_images_order[:10]}")
-
-        # Log to contamination logger
+        # Log to contamination logger (silent, for monitoring)
         try:
             from diagrams_in_arxiv.contamination_logger import log_checkpoint
-            checkpoint_status = "PASS" if pdf_images_order == pdf_batch_order else "FAIL"
             log_checkpoint(
                 checkpoint=f"CHECKPOINT 2 (REMOTE batch {batch_id})",
-                status=checkpoint_status,
+                status="PASS" if order_matches else "FAIL",
                 expected=pdf_batch_order,
                 actual=pdf_images_order,
                 details=f"After extraction (remote path), batch {batch_id}"
             )
         except ImportError:
-            pass  # Contamination logger not available in diagram_detector package
+            pass
 
-        if pdf_images_order != pdf_batch_order:
-            diagnostic.error(f"  ✗ ORDER MISMATCH at checkpoint 2!")
-            diagnostic.error("")
-            diagnostic.error("="*70)
-            diagnostic.error("ORDER MISMATCH DETECTED - ROOT CAUSE OF CONTAMINATION!")
-            diagnostic.error("="*70)
-            diagnostic.error(f"pdf_images dict order: {pdf_images_order[:5]}")
-            diagnostic.error(f"pdf_batch list order:  {pdf_batch_order[:5]}")
-            diagnostic.error("")
-            logger.error(f"This will cause results to be assigned to wrong PDFs!")
-            logger.error(f"all_images will be built in pdf_images order,")
-            logger.error(f"but results will be sliced in pdf_batch order.")
-            logger.error(f"{'═' * 70}")
+        if order_matches:
+            # PASS: quiet (only log to file at DEBUG level)
+            logger.debug(f"CHECKPOINT 2 PASS: Extraction order correct for batch {batch_id}")
         else:
-            print(f"  ✓ Extraction order matches!")
-            logger.error(f"  ✓ Extraction order matches!")
-        print("="*70 + "\n")
+            # FAIL: verbose (show details for debugging)
+            logger.error("="*70)
+            logger.error(f"CHECKPOINT 2 FAIL: ORDER MISMATCH in batch {batch_id}")
+            logger.error("="*70)
+            logger.error(f"  Expected (pdf_batch): {pdf_batch_order[:5]}")
+            logger.error(f"  Actual (pdf_images):  {pdf_images_order[:5]}")
+            logger.error(f"  This will cause contamination - results assigned to wrong PDFs!")
+            logger.error("="*70)
 
         # CRITICAL FIX: Iterate in pdf_batch order, not pdf_images.items() order!
         # This ensures all_images matches the order used for result slicing
@@ -827,20 +815,14 @@ class PDFRemoteDetector:
             pdf_page_counts[pdf_name] = len(image_paths)
 
         # ═══════════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════════
         # CHECKPOINT 3: Verify all_images list built in correct order
         # ═══════════════════════════════════════════════════════════════════
-        print("\n" + "="*70)
-        diagnostic.info("="*70)
-        diagnostic.info(f"CHECKPOINT 3: After building all_images (batch {batch_id})")
-        diagnostic.info("="*70)
-        diagnostic.info(f"  pdf_batch first 3: {[p.name for p in pdf_batch[:3]]}")
-        diagnostic.info(f"  all_images first 20: {[p.name for p in all_images[:20]]}")
-
-        # Check if images are in correct order (grouped by PDF, matching pdf_batch order)
+        images_in_correct_order = True
         if len(all_images) > 0 and len(pdf_batch) > 0:
             # Build expected image sequence from first few PDFs
             expected_sequence = []
-            for pdf_path in pdf_batch[:min(3, len(pdf_batch))]:  # Check first 3 PDFs (or fewer)
+            for pdf_path in pdf_batch[:min(3, len(pdf_batch))]:
                 pdf_stem = pdf_path.stem
                 if pdf_path.name in pdf_page_counts:
                     page_count = pdf_page_counts[pdf_path.name]
@@ -851,30 +833,33 @@ class PDFRemoteDetector:
             actual_sequence = [img.name for img in all_images[:len(expected_sequence)]]
             images_in_correct_order = (expected_sequence == actual_sequence)
 
-            # Log to contamination logger
+            # Log to contamination logger (silent, for monitoring)
             try:
                 from diagrams_in_arxiv.contamination_logger import log_checkpoint
-                checkpoint_status = "PASS" if images_in_correct_order else "FAIL"
-                # For logging, show pattern not full sequence
                 expected_summary = [f"{p.stem}_page_*" for p in pdf_batch[:3]]
                 actual_summary = [p.name for p in all_images[:min(20, len(all_images))]]
                 log_checkpoint(
                     checkpoint=f"CHECKPOINT 3 (REMOTE batch {batch_id})",
-                    status=checkpoint_status,
+                    status="PASS" if images_in_correct_order else "FAIL",
                     expected=expected_summary,
                     actual=actual_summary,
                     details=f"After building all_images (remote path), batch {batch_id}, checked {len(expected_sequence)} images"
                 )
             except ImportError:
-                pass  # Contamination logger not available
+                pass
 
             if images_in_correct_order:
-                diagnostic.info(f"  ✓ Images in correct order (checked {len(expected_sequence)} images)!")
+                # PASS: quiet (only log to file at DEBUG level)
+                logger.debug(f"CHECKPOINT 3 PASS: Image order correct for batch {batch_id} ({len(expected_sequence)} checked)")
             else:
-                diagnostic.error(f"  ✗ IMAGE ORDER MISMATCH!")
-                diagnostic.error(f"    Expected: {expected_sequence[:10]}")
-                diagnostic.error(f"    Actual:   {actual_sequence[:10]}")
-        print("="*70 + "\n")
+                # FAIL: verbose (show details for debugging)
+                logger.error("="*70)
+                logger.error(f"CHECKPOINT 3 FAIL: IMAGE ORDER MISMATCH in batch {batch_id}")
+                logger.error("="*70)
+                logger.error(f"  Expected: {expected_sequence[:10]}")
+                logger.error(f"  Actual:   {actual_sequence[:10]}")
+                logger.error(f"  This indicates manifest.txt was not used or is incorrect!")
+                logger.error("="*70)
 
         if self.verbose:
             print(f"  Running remote inference on {len(all_images)} images...")
