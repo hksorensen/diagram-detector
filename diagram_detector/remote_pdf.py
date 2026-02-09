@@ -795,7 +795,8 @@ class PDFRemoteDetector:
 
         if self.pdfs_on_remote:
             # PDFs stored on remote via storage backend - check which ones exist
-            remote_pdf_base = "~/diagrams_in_arxiv/pdfs"
+            # Use $HOME instead of ~ for reliable shell expansion in SSH commands
+            remote_pdf_base = "$HOME/diagrams_in_arxiv/pdfs"
             # Split batch into PDFs on remote vs need extraction
             if self.verbose:
                 print("  Checking which PDFs are already on remote...")
