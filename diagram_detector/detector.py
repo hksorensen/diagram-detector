@@ -1,32 +1,34 @@
 """Main diagram detection class."""
 
-from pathlib import Path
-from typing import List, Union, Optional
 import gc
+import logging
+import warnings
+from pathlib import Path
+from typing import List, Optional, Union
+
 import numpy as np
 from tqdm.auto import tqdm
 
+from .cache import DetectionCache
 from .models import DetectionResult, DiagramDetection
 from .utils import (
+    convert_pdf_to_images,
     detect_device,
     download_model,
-    get_model_path,
-    optimize_batch_size,
-    convert_pdf_to_images,
-    load_image,
-    save_json,
-    save_csv,
-    get_image_files,
     get_device_info,
+    get_image_files,
+    get_model_path,
+    load_image,
+    optimize_batch_size,
+    save_csv,
+    save_json,
 )
 
-import logging
-import warnings
-
 # Filter out torch warnings that pollute logs
-warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', category=UserWarning, module='torch')
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 logger = logging.getLogger(__name__)
+
 
 class DiagramDetector:
     """
@@ -79,8 +81,9 @@ class DiagramDetector:
 
         # Process model name early (needed for batch size optimization)
         from pathlib import Path as PathLib
+
         model_as_path = PathLib(model).expanduser()
-        if model_as_path.exists() and model_as_path.suffix == '.pt':
+        if model_as_path.exists() and model_as_path.suffix == ".pt":
             # Local .pt file - use filename as model name
             self.model_name = model_as_path.stem
         else:
@@ -90,6 +93,7 @@ class DiagramDetector:
         # Initialize cache
         if cache is True:
             from .cache import DetectionCache
+
             self.cache = DetectionCache(compression=True, auto_cleanup=True)
         elif cache is False or cache is None:
             self.cache = None
@@ -116,6 +120,7 @@ class DiagramDetector:
         if batch_size == "auto":
             # For custom/unknown models, use a conservative default
             from .utils import MODEL_INFO
+
             if self.model_name in MODEL_INFO:
                 self.batch_size = optimize_batch_size(self.model_name, self.device)
                 if self.verbose:
@@ -131,19 +136,21 @@ class DiagramDetector:
         self._tensorrt = tensorrt  # tracked for padding logic in _detect_batch
 
         # Handle model loading - support both named models and local .pt files
-        if model_as_path.exists() and model_as_path.suffix == '.pt':
+        if model_as_path.exists() and model_as_path.suffix == ".pt":
             # Local .pt file provided - install it to cache
             if self.verbose:
                 print(f"Installing local model from: {model_as_path}")
 
             # Copy to cache
             from .utils import get_cache_dir as get_cache
+
             cache_dir = get_cache()
             model_path = cache_dir / f"{self.model_name}.pt"
 
             # Only copy if not already there or if source is newer
             if not model_path.exists() or model_as_path.stat().st_mtime > model_path.stat().st_mtime:
                 import shutil
+
                 shutil.copy2(model_as_path, model_path)
                 if self.verbose:
                     print(f"✓ Model installed to cache: {model_path}")
@@ -176,6 +183,7 @@ class DiagramDetector:
             # Get GPU name for engine filename (engines are GPU-specific)
             try:
                 import torch
+
                 gpu_name = torch.cuda.get_device_name(0).replace(" ", "_").replace("/", "_")
             except Exception:
                 gpu_name = "unknown_gpu"
@@ -190,10 +198,10 @@ class DiagramDetector:
                 self.model = YOLO(str(engine_path))
             else:
                 if self.verbose:
-                    print(f"Exporting TensorRT engine (one-time, may take a few minutes)...")
+                    print("Exporting TensorRT engine (one-time, may take a few minutes)...")
                     print(f"  - Model: {model_path.name}")
                     print(f"  - GPU: {gpu_name}")
-                    print(f"  - FP16: enabled")
+                    print("  - FP16: enabled")
 
                 # Load PyTorch model first
                 pt_model = YOLO(str(model_path))
@@ -214,6 +222,7 @@ class DiagramDetector:
                 # Move to our cache location with descriptive name
                 if exported_path.exists() and exported_path != engine_path:
                     import shutil
+
                     shutil.move(str(exported_path), str(engine_path))
 
                 if self.verbose:
@@ -234,6 +243,7 @@ class DiagramDetector:
         """Call torch.cuda.empty_cache() and gc.collect() if CUDA is available. No-op otherwise."""
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -271,12 +281,12 @@ class DiagramDetector:
 
         if "detector" not in config:
             raise ValueError(
-                f"Config file missing 'detector' section. "
-                f"Expected format:\n"
-                f"detector:\n"
-                f"  model: v5\n"
-                f"  confidence: 0.20\n"
-                f"  ..."
+                "Config file missing 'detector' section. "
+                "Expected format:\n"
+                "detector:\n"
+                "  model: v5\n"
+                "  confidence: 0.20\n"
+                "  ..."
             )
 
         detector_config = config["detector"]
@@ -418,12 +428,15 @@ class DiagramDetector:
             # Check for manifest file in directory (explicit ordering)
             manifest_path = input_path / "manifest.txt"
             if manifest_path.exists():
-                print(f"[DEBUG] detect(): Found manifest file - using EXPLICIT ordering (priority_list preserved!)", flush=True)
+                print(
+                    "[DEBUG] detect(): Found manifest file - using EXPLICIT ordering (priority_list preserved!)",
+                    flush=True,
+                )
                 image_paths = []
-                with open(manifest_path, 'r') as f:
+                with open(manifest_path, "r") as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#'):
+                        if line and not line.startswith("#"):
                             # Manifest contains filenames only, resolve relative to directory
                             img_path = input_path / line
                             if img_path.exists():
@@ -435,9 +448,9 @@ class DiagramDetector:
                     print(f"[DEBUG]   Manifest order first 3: {[p.name for p in image_paths[:3]]}", flush=True)
                     print(f"[DEBUG]   Manifest order last 3: {[p.name for p in image_paths[-3:]]}", flush=True)
             else:
-                # No manifest - fall back to directory scan
-                print(f"[DEBUG] detect(): No manifest found, scanning directory", flush=True)
-                image_paths = get_image_files(input_path)
+                # No manifest - fall back to directory scan (recursive for subdirs)
+                print("[DEBUG] detect(): No manifest found, scanning directory recursively", flush=True)
+                image_paths = get_image_files(input_path, recursive=True)
 
             if not image_paths:
                 raise ValueError(f"No images found in {input_path}")
@@ -445,13 +458,16 @@ class DiagramDetector:
             image_paths = [input_path]
 
         import logging
-        import sys
+
         logger = logging.getLogger(__name__)
         logger.debug(f"[DIAGNOSTIC] detect(): Processing {len(image_paths)} image paths")
         batch_sz = int(self.batch_size) if isinstance(self.batch_size, int) else min(32, len(image_paths)) or 1
         # Debug progress to stdout so it appears in inference.log when run remotely
         num_batches = (len(image_paths) + batch_sz - 1) // batch_sz
-        print(f"[DEBUG] detect(): starting, {len(image_paths)} images, batch_size={self.batch_size}, num_batches={num_batches}", flush=True)
+        print(
+            f"[DEBUG] detect(): starting, {len(image_paths)} images, batch_size={self.batch_size}, num_batches={num_batches}",
+            flush=True,
+        )
         if self.verbose:
             print(f"\nProcessing {len(image_paths)} image(s)...")
 
@@ -468,12 +484,20 @@ class DiagramDetector:
         ):
             batch_paths = image_paths[i : i + batch_sz]
             batch_index += 1
-            print(f"[DEBUG] detect(): batch {batch_index}/{num_batches}, running _detect_batch on {len(batch_paths)} images (indices {i}-{i + len(batch_paths) - 1})", flush=True)
+            print(
+                f"[DEBUG] detect(): batch {batch_index}/{num_batches}, running _detect_batch on {len(batch_paths)} images (indices {i}-{i + len(batch_paths) - 1})",
+                flush=True,
+            )
             batch_results = self._detect_batch(
                 batch_paths, store_images=store_images or save_crops or save_visualizations
             )
-            print(f"[DEBUG] detect(): batch {batch_index}/{num_batches} returned {len(batch_results)} results (expected {len(batch_paths)})", flush=True)
-            logger.debug(f"[DIAGNOSTIC] detect(): Batch {batch_index} returned {len(batch_results)} results (expected {len(batch_paths)})")
+            print(
+                f"[DEBUG] detect(): batch {batch_index}/{num_batches} returned {len(batch_results)} results (expected {len(batch_paths)})",
+                flush=True,
+            )
+            logger.debug(
+                f"[DIAGNOSTIC] detect(): Batch {batch_index} returned {len(batch_results)} results (expected {len(batch_paths)})"
+            )
             results.extend(batch_results)
 
         print(f"[DEBUG] detect(): complete, total {len(results)} results", flush=True)
@@ -564,8 +588,9 @@ class DiagramDetector:
 
         # logger.info(f"Detecting {len(images)} pages")
         for page_num, image in enumerate(
-            tqdm(images, desc="Detecting", unit="page",
-            disable=False, total=len(images), leave=False), # WAS: disable=not self.verbose
+            tqdm(
+                images, desc="Detecting", unit="page", disable=False, total=len(images), leave=False
+            ),  # WAS: disable=not self.verbose
             start=first_page or 1,
         ):
             # Create temporary result with image
@@ -598,11 +623,10 @@ class DiagramDetector:
 
         return results
 
-    def _detect_batch(
-        self, image_paths: List[Path], store_images: bool = False
-    ) -> List[DetectionResult]:
+    def _detect_batch(self, image_paths: List[Path], store_images: bool = False) -> List[DetectionResult]:
         """Run inference on batch of images."""
         import sys
+
         # Debug to stdout so it appears in inference.log when run remotely
         print(f"[DEBUG] _detect_batch(): entry, {len(image_paths)} images", flush=True)
 
@@ -613,18 +637,13 @@ class DiagramDetector:
             images = None
 
         # Run YOLO inference with error handling
-        import warnings
         import io
         import subprocess
+        import warnings
 
         # Get current ulimit for diagnostics
         try:
-            ulimit_result = subprocess.run(
-                ["sh", "-c", "ulimit -n"],
-                capture_output=True,
-                text=True,
-                timeout=1
-            )
+            ulimit_result = subprocess.run(["sh", "-c", "ulimit -n"], capture_output=True, text=True, timeout=1)
             current_ulimit = ulimit_result.stdout.strip() if ulimit_result.returncode == 0 else "unknown"
         except Exception:
             current_ulimit = "unknown"
@@ -647,7 +666,10 @@ class DiagramDetector:
                 if self._tensorrt and len(image_paths) < self.batch_size:
                     pad_count = self.batch_size - len(image_paths)
                     predict_paths = list(image_paths) + [image_paths[0]] * pad_count
-                    print(f"[DEBUG] _detect_batch(): TensorRT pad {len(image_paths)} → {len(predict_paths)} (padding {pad_count})", flush=True)
+                    print(
+                        f"[DEBUG] _detect_batch(): TensorRT pad {len(image_paths)} → {len(predict_paths)} (padding {pad_count})",
+                        flush=True,
+                    )
 
                 print(f"[DEBUG] _detect_batch(): about to model.predict() on {len(predict_paths)} images", flush=True)
                 yolo_results = self.model.predict(
@@ -667,10 +689,14 @@ class DiagramDetector:
                 print(f"[DEBUG] _detect_batch(): predict() returned {len(yolo_results)} results", flush=True)
                 try:
                     import torch
+
                     if torch.cuda.is_available():
-                        used_mb = torch.cuda.memory_allocated() / (1024 ** 2)
-                        reserved_mb = torch.cuda.memory_reserved() / (1024 ** 2)
-                        print(f"[DEBUG] _detect_batch(): GPU memory allocated={used_mb:.1f} MB reserved={reserved_mb:.1f} MB", flush=True)
+                        used_mb = torch.cuda.memory_allocated() / (1024**2)
+                        reserved_mb = torch.cuda.memory_reserved() / (1024**2)
+                        print(
+                            f"[DEBUG] _detect_batch(): GPU memory allocated={used_mb:.1f} MB reserved={reserved_mb:.1f} MB",
+                            flush=True,
+                        )
                 except Exception:
                     pass
             except Exception as e:
@@ -716,16 +742,14 @@ class DiagramDetector:
         # Parse results
         results = []
         for i, (yolo_result, image_path) in enumerate(zip(yolo_results, image_paths)):
-            result = self._parse_yolo_result(
-                yolo_result, filename=image_path.name, image=images[i] if images else None
-            )
+            result = self._parse_yolo_result(yolo_result, filename=image_path.name, image=images[i] if images else None)
             results.append(result)
 
         # Force garbage collection to close file descriptors leaked by YOLO
         # predict().  Interval kept low (64) because multiple inference workers
         # share the same process FD table — with N workers the effective
         # interval is N×64 images between cleanups.
-        if not hasattr(self, '_images_processed'):
+        if not hasattr(self, "_images_processed"):
             self._images_processed = 0
         self._images_processed += len(image_paths)
 
@@ -739,9 +763,7 @@ class DiagramDetector:
 
         return results
 
-    def _detect_image(
-        self, image: np.ndarray, filename: str, store_image: bool = False
-    ) -> DetectionResult:
+    def _detect_image(self, image: np.ndarray, filename: str, store_image: bool = False) -> DetectionResult:
         """Run inference on single image array."""
         # Run YOLO inference
         yolo_results = self.model.predict(
@@ -753,9 +775,7 @@ class DiagramDetector:
             verbose=False,
         )
 
-        result = self._parse_yolo_result(
-            yolo_results[0], filename=filename, image=image if store_image else None
-        )
+        result = self._parse_yolo_result(yolo_results[0], filename=filename, image=image if store_image else None)
 
         # Note: gc.collect() removed from here as it's too expensive per-image
         # File descriptor cleanup is handled in _detect_batch() every 256 images
@@ -763,9 +783,7 @@ class DiagramDetector:
 
         return result
 
-    def _parse_yolo_result(
-        self, yolo_result, filename: str, image: Optional[np.ndarray] = None
-    ) -> DetectionResult:
+    def _parse_yolo_result(self, yolo_result, filename: str, image: Optional[np.ndarray] = None) -> DetectionResult:
         """Parse YOLO result into DetectionResult."""
         # Get image dimensions first (needed for clamping)
         if image is not None:
@@ -784,9 +802,9 @@ class DiagramDetector:
                 # Clamp coordinates to valid range [0, width/height]
                 # This prevents negative coordinates or coordinates beyond image bounds
                 if width > 0 and height > 0:
-                    bbox[0] = max(0.0, min(bbox[0], float(width)))   # x1
+                    bbox[0] = max(0.0, min(bbox[0], float(width)))  # x1
                     bbox[1] = max(0.0, min(bbox[1], float(height)))  # y1
-                    bbox[2] = max(0.0, min(bbox[2], float(width)))   # x2
+                    bbox[2] = max(0.0, min(bbox[2], float(width)))  # x2
                     bbox[3] = max(0.0, min(bbox[3], float(height)))  # y2
 
                     # Normalize bbox coordinates: ensure x1 < x2 and y1 < y2
@@ -804,9 +822,7 @@ class DiagramDetector:
                 cls_id = int(box.cls[0].cpu().numpy())
                 cls_name = yolo_result.names[cls_id]
 
-                detection = DiagramDetection(
-                    bbox=tuple(bbox), confidence=conf, class_name=cls_name, class_id=cls_id
-                )
+                detection = DiagramDetection(bbox=tuple(bbox), confidence=conf, class_name=cls_name, class_id=cls_id)
                 detections.append(detection)
 
         return DetectionResult(
@@ -817,9 +833,7 @@ class DiagramDetector:
             image_height=height,
         )
 
-    def save_results(
-        self, results: List[DetectionResult], output_dir: Union[str, Path], format: str = "json"
-    ) -> None:
+    def save_results(self, results: List[DetectionResult], output_dir: Union[str, Path], format: str = "json") -> None:
         """
         Save detection results.
 
@@ -829,6 +843,7 @@ class DiagramDetector:
             format: Output format ('json' or 'csv')
         """
         import os
+
         output_dir = Path(output_dir)
 
         # Warn if using relative path
@@ -849,6 +864,7 @@ class DiagramDetector:
             # Save as JSON
             data = [r.to_dict() for r in results]
             import logging
+
             logger = logging.getLogger(__name__)
             logger.debug(f"[DIAGNOSTIC] save_results(): Saving {len(data)} results to JSON")
             output_path = output_dir / "detections.json"
@@ -869,9 +885,7 @@ class DiagramDetector:
         else:
             raise ValueError(f"Unknown format: {format}. Use 'json' or 'csv'")
 
-    def save_crops(
-        self, results: List[DetectionResult], output_dir: Union[str, Path], padding: int = 10
-    ) -> None:
+    def save_crops(self, results: List[DetectionResult], output_dir: Union[str, Path], padding: int = 10) -> None:
         """
         Extract and save cropped diagram regions.
 
@@ -884,6 +898,7 @@ class DiagramDetector:
             ValueError: If results contain diagrams but images were not stored during detection
         """
         import os
+
         output_dir = Path(output_dir)
 
         # Warn if using relative path
@@ -901,9 +916,7 @@ class DiagramDetector:
             ) from e
 
         # Check if any results have diagrams without stored images
-        diagrams_without_images = [
-            r.filename for r in results if r.has_diagram and r.image is None
-        ]
+        diagrams_without_images = [r.filename for r in results if r.has_diagram and r.image is None]
 
         if diagrams_without_images:
             raise ValueError(
@@ -916,9 +929,7 @@ class DiagramDetector:
 
         total_crops = 0
 
-        for result in tqdm(
-            results, desc="Extracting crops", disable=not self.verbose, unit="image"
-        ):
+        for result in tqdm(results, desc="Extracting crops", disable=not self.verbose, unit="image"):
             if not result.has_diagram:
                 continue
 
@@ -955,6 +966,7 @@ class DiagramDetector:
             ValueError: If results contain diagrams but images were not stored during detection
         """
         import os
+
         output_dir = Path(output_dir)
 
         # Warn if using relative path
@@ -972,9 +984,7 @@ class DiagramDetector:
             ) from e
 
         # Check if any results have diagrams without stored images
-        diagrams_without_images = [
-            r.filename for r in results if r.has_diagram and r.image is None
-        ]
+        diagrams_without_images = [r.filename for r in results if r.has_diagram and r.image is None]
 
         if diagrams_without_images:
             raise ValueError(
@@ -985,9 +995,7 @@ class DiagramDetector:
                 f"First few files affected: {diagrams_without_images[:3]}"
             )
 
-        for result in tqdm(
-            results, desc="Creating visualizations", disable=not self.verbose, unit="image"
-        ):
+        for result in tqdm(results, desc="Creating visualizations", disable=not self.verbose, unit="image"):
             if not result.has_diagram:
                 continue
 
