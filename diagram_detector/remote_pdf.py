@@ -651,12 +651,10 @@ class PDFRemoteDetector:
             pdf_images = {}
             extraction_time = 0.0
 
-        # For PDFs on remote, we'll handle them differently in the remote detector
-        # Store list of remote PDFs for later processing
+        # TODO: For PDFs already on remote, implement remote-side extraction
+        # Currently this feature is incomplete - all PDFs are extracted locally
         if pdfs_on_remote:
-            # Mark these for remote-side extraction
-            for pdf in pdfs_on_remote:
-                pdf_images[pdf.name] = 'REMOTE'  # Special marker
+            logger.debug(f"Note: {len(pdfs_on_remote)} PDFs are on remote but will be extracted locally (remote extraction not yet implemented)")
 
         # Flatten to all images
         all_images = []
