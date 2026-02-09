@@ -43,6 +43,7 @@ class RemoteConfig:
     endpoints: List[tuple]  # List of (host, port) tuples to try in order
     max_rsync_retries: int = 3
     connection_timeout: float = 2.0
+    ssh_identity_file: Optional[str] = None  # Optional SSH key file (limits auth attempts)
 
     # Remote server paths
     remote_work_dir: str = "~/diagram-detector"
@@ -79,8 +80,19 @@ class RemoteConfig:
 
     @property
     def ssh_port_args(self) -> List[str]:
-        """Get SSH port arguments."""
-        return ["-p", str(self.port)] if self.port != 22 else []
+        """Get SSH connection arguments (port + optional identity file)."""
+        args = []
+
+        # Port
+        if self.port != 22:
+            args.extend(["-p", str(self.port)])
+
+        # Identity file (limits authentication attempts to avoid "Too many authentication failures")
+        if self.ssh_identity_file:
+            identity_path = Path(self.ssh_identity_file).expanduser()
+            args.extend(["-o", "IdentitiesOnly=yes", "-i", str(identity_path)])
+
+        return args
 
     def get_rsync_ssh_args(self, control_path: Optional[str] = None) -> List[str]:
         """
@@ -97,6 +109,11 @@ class RemoteConfig:
         # Port
         if self.port != 22:
             ssh_opts.append(f"-p {self.port}")
+
+        # Identity file (limits authentication attempts to avoid "Too many authentication failures")
+        if self.ssh_identity_file:
+            identity_path = Path(self.ssh_identity_file).expanduser()
+            ssh_opts.extend(["-o IdentitiesOnly=yes", f"-i {identity_path}"])
 
         # Connection multiplexing (reuse single SSH connection for multiple rsync operations)
         if control_path:
@@ -1192,20 +1209,26 @@ class SSHRemoteDetector:
 
                 # Second: verify file sizes match
                 logger.info(f"[UPLOAD] Verifying file sizes...")
-                size_cmd = f"du -b {remote_input}* | sort -k2"
+                # Use stat -f (BSD/macOS) or stat -c (Linux) for cross-platform size checking
+                # Try Linux format first, fall back to macOS format
+                size_cmd = f"stat -c '%s %n' {remote_input}* 2>/dev/null || stat -f '%z %N' {remote_input}*"
                 size_result = self._run_ssh_command(size_cmd, check=False)
                 if size_result.returncode == 0:
                     remote_files = {}
                     for line in size_result.stdout.strip().split('\n'):
                         if line:
-                            parts = line.split('\t')
+                            parts = line.split(maxsplit=1)
                             if len(parts) == 2:
                                 size_str, filepath = parts
                                 filename = Path(filepath).name
                                 remote_files[filename] = int(size_str)
 
-                    # Compare with local files
+                    # Compare with local files (add manifest.txt to local_sizes)
+                    manifest_path = temp_path / "manifest.txt"
                     local_sizes = {f.name: f.stat().st_size for f in temp_files}
+                    if manifest_path.exists():
+                        local_sizes["manifest.txt"] = manifest_path.stat().st_size
+
                     size_mismatches = []
                     for filename, local_size in local_sizes.items():
                         remote_size = remote_files.get(filename, -1)
@@ -1336,7 +1359,7 @@ class SSHRemoteDetector:
             # Check ulimit and GPU memory before inference
             f"echo 'File descriptor limit: '$(ulimit -n) >> {log_file} && "
             f"echo 'Processing {num_images} images' >> {log_file} && "
-            f"nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits >> {log_file} 2>/dev/null && "
+            f"nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits >> {log_file} 2>/dev/null; "  # ; not && - nvidia-smi may not exist
             f"echo '---' >> {log_file} && "
             # Removed dummy error string - let stderr create the file naturally
             f"{self.config.python_path} -u -m diagram_detector.cli "  # -u for unbuffered output
