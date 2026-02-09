@@ -603,6 +603,8 @@ class PDFRemoteDetector:
         """
         import json
         import time
+        import logging
+        logger = logging.getLogger(__name__)
 
         start_time = time.time()
 
