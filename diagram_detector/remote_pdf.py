@@ -312,6 +312,7 @@ class PDFRemoteDetector:
         max_pdf_size_mb: Optional[float] = None,
         max_pdf_size_pages: Optional[int] = None,
         use_persistent_server: bool = False,
+        remote_cleanup: bool = False,
     ):
         """
         Initialize PDF remote detector.
@@ -339,6 +340,7 @@ class PDFRemoteDetector:
             max_pdf_size_mb: Skip PDFs larger than this (MB). None = no limit. Useful for slow networks.
             max_pdf_size_pages: Skip PDFs with more pages than this. None = no limit. Page count is read before extraction (fast).
             use_persistent_server: Keep model resident in GPU memory across sub-batches (~3-5s reload saved per batch)
+            remote_cleanup: Delete remote JPGs after processing (default: False for debugging)
         """
         # Auto-load config if not provided
         if config is None:
@@ -358,6 +360,7 @@ class PDFRemoteDetector:
         self.max_workers = max_workers
         self.max_pdf_size_mb = max_pdf_size_mb
         self.max_pdf_size_pages = max_pdf_size_pages
+        self.remote_cleanup = remote_cleanup
 
         self.tensorrt = tensorrt
 
@@ -890,7 +893,7 @@ class PDFRemoteDetector:
         results = self.remote_detector.detect(
             all_images,
             output_dir=batch_dir / "results",
-            cleanup=False,  # DEBUG: Disabled cleanup to inspect error logs
+            cleanup=self.remote_cleanup,  # Configurable: default False for debugging
             auto_git_commit=auto_git_commit,
             gpu_batch_size=gpu_batch_size,
         )

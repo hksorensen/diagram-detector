@@ -716,18 +716,44 @@ def validate_model_file(model_path: Path) -> bool:
         return False
 
 
+def _extract_page_sort_key(path: Path) -> tuple:
+    """
+    Extract sort key from image filename for deterministic ordering.
+
+    Handles patterns like:
+    - 2001.03312v1_page_0001.jpg → ('2001.03312v1', 1)
+    - paper_name_page_0042.png → ('paper_name', 42)
+    - random_image.jpg → ('random_image.jpg', 0)  # Fallback
+
+    Returns:
+        Tuple of (pdf_stem, page_number) for sorting
+    """
+    import re
+
+    # Pattern: {anything}_page_{digits}.{ext}
+    match = re.match(r'(.+)_page_(\d+)\.\w+$', path.name)
+    if match:
+        pdf_stem, page_num = match.groups()
+        return (pdf_stem, int(page_num))
+
+    # Fallback: use filename as-is, page 0
+    return (path.name, 0)
+
+
 def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
     """
-    Get all image files in directory.
+    Get all image files in directory, sorted by (pdf_stem, page_number).
 
     Args:
         directory: Directory to search
         recursive: Search recursively
 
     Returns:
-        List of image file paths in filesystem order (no sorting applied).
-        For remote inference, this preserves the upload order from rsync.
-        For standalone use, order doesn't matter as each image is independent.
+        List of image file paths sorted by extracted PDF stem and page number.
+        This ensures deterministic ordering regardless of filesystem directory entry order.
+
+        Files matching pattern {stem}_page_{num}.jpg are sorted by (stem, num).
+        Other files are sorted alphabetically and placed at the beginning.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -744,8 +770,12 @@ def get_image_files(directory: Path, recursive: bool = False) -> List[Path]:
             files.extend(directory.glob(f"*{ext}"))
             files.extend(directory.glob(f"*{ext.upper()}"))
 
-    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files)} image files (filesystem order)")
-    if files:
-        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files[:3]]}")
-        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files[-3:]]}")
-    return files
+    # Sort by (pdf_stem, page_number) for deterministic ordering
+    files_sorted = sorted(files, key=_extract_page_sort_key)
+
+    logger.debug(f"[DIAGNOSTIC] get_image_files: Found {len(files_sorted)} image files (sorted by pdf_stem, page_num)")
+    if files_sorted:
+        logger.debug(f"[DIAGNOSTIC]   First 3: {[f.name for f in files_sorted[:3]]}")
+        logger.debug(f"[DIAGNOSTIC]   Last 3: {[f.name for f in files_sorted[-3:]]}")
+
+    return files_sorted
