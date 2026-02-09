@@ -1140,22 +1140,29 @@ class PDFRemoteDetector:
                 logger.error("  This indicates manifest.txt was not used or is incorrect!")
                 logger.error("=" * 70)
 
-        if self.verbose:
-            print(f"  Running remote inference on {len(all_images)} images...")
+        # Only run traditional detection if we have images to process
+        if len(all_images) > 0:
+            if self.verbose:
+                print(f"  Running remote inference on {len(all_images)} images...")
 
-        # Run remote inference on all images
-        inference_start = time.time()
-        results = self.remote_detector.detect(
-            all_images,
-            output_dir=batch_dir / "results",
-            cleanup=self.remote_cleanup,  # Configurable: default False for debugging
-            auto_git_commit=auto_git_commit,
-            gpu_batch_size=gpu_batch_size,
-        )
-        inference_time = time.time() - inference_start
+            # Run remote inference on all images
+            inference_start = time.time()
+            results = self.remote_detector.detect(
+                all_images,
+                output_dir=batch_dir / "results",
+                cleanup=self.remote_cleanup,  # Configurable: default False for debugging
+                auto_git_commit=auto_git_commit,
+                gpu_batch_size=gpu_batch_size,
+            )
+            inference_time = time.time() - inference_start
 
-        if self.verbose:
-            print(f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)")
+            if self.verbose:
+                print(f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)")
+        else:
+            # All PDFs processed remotely - no images to detect
+            logger.info("No local images - all PDFs processed via remote persistent server")
+            results = []
+            inference_time = 0.0
 
         # Validate inference returned correct number of results
         if len(results) != len(all_images):
@@ -1353,19 +1360,26 @@ class PDFRemoteDetector:
                     error_message="",
                 )
 
+        # Merge remote_results into pdf_results (for batches with PDFs processed remotely)
+        if remote_results:
+            logger.info(f"Merging {len(remote_results)} remote PDF results into batch results")
+            pdf_results.update(remote_results)
+
         # Query GPU memory after inference
         gpu_mem_used, gpu_mem_free = self.remote_detector.get_gpu_memory()
 
         # Log batch timing breakdown
         total_time = extraction_time + inference_time
+        total_pages = sum(len(page_results) for page_results in pdf_results.values())
+        total_diagrams = sum(r.count for page_results in pdf_results.values() for r in page_results)
+
         logger.info(f"[BATCH {batch_id}] Timing breakdown:")
         logger.info(f"  Extraction:  {extraction_time:6.1f}s ({100*extraction_time/total_time:5.1f}%)")
         logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
         logger.info(f"  Total:       {total_time:6.1f}s")
-        logger.info(f"  Throughput:  {len(all_images)/total_time:.1f} pages/s")
-        logger.info(
-            f"  Results:     {len(pdf_results)} PDFs, {len(all_images)} pages, {sum(r.count for page_results in pdf_results.values() for r in page_results)} diagrams"
-        )
+        if total_time > 0:
+            logger.info(f"  Throughput:  {total_pages/total_time:.1f} pages/s")
+        logger.info(f"  Results:     {len(pdf_results)} PDFs, {total_pages} pages, {total_diagrams} diagrams")
 
         # Cleanup batch directory
         shutil.rmtree(batch_dir, ignore_errors=True)
