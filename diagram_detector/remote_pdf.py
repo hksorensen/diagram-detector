@@ -389,6 +389,10 @@ class PDFRemoteDetector:
         # Remote cache can be re-enabled later if needed for multi-machine setups
         self.cache = None
 
+        # Work directory for remote PDF processing results (when PDFs already on remote)
+        import tempfile
+        self.work_dir = Path(tempfile.mkdtemp(prefix="remote_pdf_"))
+
         # if self.verbose:
         #     cache_stats = self.cache.stats()
         #     print(
