@@ -1713,19 +1713,53 @@ class SSHRemoteDetector:
         self._server_proc.stdin.write(cmd + "\n")
         self._server_proc.stdin.flush()
 
-        # Wait for response
-        while True:
-            response_line = self._server_proc.stdout.readline().strip()
-            if not response_line:
-                self._server_proc.wait()
-                self._server_proc = None
-                raise RuntimeError(f"Persistent server died during PDF inference (batch {batch_id})")
-            try:
-                response = json.loads(response_line)
-                break
-            except json.JSONDecodeError:
+        # Wait for response with progress indicator
+        import threading
+        import time
+
+        spinner_active = threading.Event()
+        spinner_active.set()
+        start_time = time.time()
+
+        def show_spinner():
+            """Show a spinner while waiting for inference to complete."""
+            spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            idx = 0
+            while spinner_active.is_set():
+                elapsed = time.time() - start_time
+                mins, secs = divmod(int(elapsed), 60)
                 if self.verbose:
-                    print(f"  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
+                    print(
+                        f"\r  {spinner_chars[idx]} Processing on GPU... (elapsed: {mins}m {secs:02d}s)",
+                        end="",
+                        flush=True,
+                    )
+                idx = (idx + 1) % len(spinner_chars)
+                time.sleep(0.1)
+
+        if self.verbose:
+            spinner_thread = threading.Thread(target=show_spinner, daemon=True)
+            spinner_thread.start()
+
+        try:
+            while True:
+                response_line = self._server_proc.stdout.readline().strip()
+                if not response_line:
+                    self._server_proc.wait()
+                    self._server_proc = None
+                    raise RuntimeError(f"Persistent server died during PDF inference (batch {batch_id})")
+                try:
+                    response = json.loads(response_line)
+                    break
+                except json.JSONDecodeError:
+                    if self.verbose:
+                        print(f"\n  [server] Skipping non-JSON stdout: {response_line[:80]!r}")
+        finally:
+            spinner_active.clear()
+            if self.verbose:
+                elapsed = time.time() - start_time
+                mins, secs = divmod(int(elapsed), 60)
+                print(f"\r  ✓ Inference complete ({mins}m {secs:02d}s)                    ")
 
         if response["status"] == "ERROR":
             raise RuntimeError(f"Persistent server error on PDF batch {batch_id}: {response['error']}")
