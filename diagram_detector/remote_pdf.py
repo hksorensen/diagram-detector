@@ -1291,11 +1291,49 @@ class PDFRemoteDetector:
                 result_idx += len(pdf_result_list)
                 continue
 
+            # CHECKPOINT 6: Result Count Validation
+            # Verify we got expected number of results (= num_pages)
+            if len(pdf_result_list) != num_pages:
+                logger.warning("")
+                logger.warning(f"⚠️  RESULT COUNT MISMATCH: {pdf_path.name}")
+                logger.warning(f"  Expected: {num_pages} results (= page count)")
+                logger.warning(f"  Actual:   {len(pdf_result_list)} results")
+                logger.warning(f"  Difference: {abs(len(pdf_result_list) - num_pages)}")
+                logger.warning("")
+                # This is a warning, not fatal - inference might skip some pages
+
+            # CHECKPOINT 7: Page Number Sequencing
+            # Verify results are ordered by page number within each PDF
+            if len(pdf_result_list) > 1:
+                page_numbers = [r.page_number for r in pdf_result_list]
+                expected_order = sorted(page_numbers)
+                if page_numbers != expected_order:
+                    logger.warning("")
+                    logger.warning(f"⚠️  PAGE ORDER ISSUE: {pdf_path.name}")
+                    logger.warning(f"  Page numbers: {page_numbers[:10]}")
+                    logger.warning(f"  Expected:     {expected_order[:10]}")
+                    logger.warning("  Results may be out of order!")
+                    logger.warning("")
+
+            # CHECKPOINT 8: Result Consistency
+            # Basic sanity checks on detection results
+            if len(pdf_result_list) > 0:
+                # Check for all-zero detections (suspicious)
+                all_zero = all(r.count == 0 for r in pdf_result_list)
+                if all_zero and len(pdf_result_list) > 5:
+                    logger.debug(f"  Note: {pdf_path.name} has 0 diagrams on all {len(pdf_result_list)} pages")
+
+                # Check for unreasonably high detections (possible duplicate)
+                max_count = max(r.count for r in pdf_result_list)
+                if max_count > 20:
+                    logger.warning(f"  ⚠️  High diagram count: {pdf_path.name} has {max_count} diagrams on one page")
+
             # Log success for first few PDFs (helps verify correct mapping)
             if len(pdf_results) < 3:
-                logger.debug(f"✓ Filename validation passed for {pdf_path.name}")
+                logger.debug(f"✓ All validation checkpoints passed for {pdf_path.name}")
                 if len(pdf_result_list) > 0:
                     logger.debug(f"  Sample filenames: {[r.filename for r in pdf_result_list[:2]]}")
+                    logger.debug(f"  Page numbers: {[r.page_number for r in pdf_result_list[:3]]}")
 
             # CRITICAL: Check if slice returned empty results
             # This happens when inference returned fewer results than expected
