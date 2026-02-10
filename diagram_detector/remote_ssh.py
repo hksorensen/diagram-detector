@@ -1561,8 +1561,20 @@ class SSHRemoteDetector:
                 for d in item.get("detections", [])
             ]
 
+            # Extract page number from JSON or parse from filename
+            page_number = item.get("page_number")
+            if page_number is None:
+                # Parse from filename: "2407.14475v1_page_0003.jpg" -> 3
+                filename = item["filename"]
+                import re
+
+                match = re.search(r"_page_(\d+)", filename)
+                if match:
+                    page_number = int(match.group(1))
+
             result = DetectionResult(
                 filename=item["filename"],
+                page_number=page_number,
                 detections=detections,
                 image_width=item.get("image_width", 0),
                 image_height=item.get("image_height", 0),
