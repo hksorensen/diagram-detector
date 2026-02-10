@@ -1153,263 +1153,288 @@ class PDFRemoteDetector:
                 logger.error("  This indicates manifest.txt was not used or is incorrect!")
                 logger.error("=" * 70)
 
-        # Only run traditional detection if we have images to process
-        if len(all_images) > 0:
-            if self.verbose:
-                print(f"  Running remote inference on {len(all_images)} images...")
+        # ═══════════════════════════════════════════════════════════════════
+        # OPTIMIZATION: Use remote results directly if available
+        # ═══════════════════════════════════════════════════════════════════
+        # If all PDFs were processed remotely via infer_pdfs, we already have
+        # complete results from the remote server. Skip the redundant upload+inference!
+        if remote_results and len(all_images) == 0:
+            # All PDFs processed remotely - use results directly, NO UPLOAD!
+            logger.info("=" * 70)
+            logger.info("FULLY REMOTE PATH: Using results from remote infer_pdfs")
+            logger.info("=" * 70)
+            logger.info(f"  PDFs processed remotely:  {len(remote_results)}")
+            logger.info(f"  Local extraction skipped: {len(pdfs_on_remote_list)}")
+            logger.info("  Upload eliminated:        100%")
+            logger.info("=" * 70)
 
-            # Run remote inference on all images
-            inference_start = time.time()
-            results = self.remote_detector.detect(
-                all_images,
-                output_dir=batch_dir / "results",
-                cleanup=self.remote_cleanup,  # Configurable: default False for debugging
-                auto_git_commit=auto_git_commit,
-                gpu_batch_size=gpu_batch_size,
-            )
-            inference_time = time.time() - inference_start
-
-            if self.verbose:
-                print(f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)")
+            pdf_results = remote_results  # Already in correct format!
+            results = []  # No image-level results from upload path
+            inference_time = remote_processing_time
         else:
-            # All PDFs processed remotely - no images to detect
-            logger.info("No local images - all PDFs processed via remote persistent server")
-            results = []
-            inference_time = remote_processing_time  # Use remote processing time
+            # Traditional path: upload and infer local images
+            # Only run traditional detection if we have images to process
+            if len(all_images) > 0:
+                if self.verbose:
+                    print(f"  Running remote inference on {len(all_images)} images...")
 
-        # Validate inference returned correct number of results
-        if len(results) != len(all_images):
-            missing_count = len(all_images) - len(results)
-            logger.error("=" * 70)
-            logger.error(f"INFERENCE MISMATCH IN BATCH {batch_id}")
-            logger.error("=" * 70)
-            logger.error(f"Expected: {len(all_images)} results")
-            logger.error(f"Received: {len(results)} results")
-            logger.error(f"Missing:  {missing_count} results ({missing_count/len(all_images)*100:.1f}%)")
-            logger.error("")
-            logger.error(f"This indicates inference failed for {missing_count} images.")
-            logger.error("Check inference.err logs for details (likely OOM or model errors).")
-            logger.error("Affected PDFs in this batch will have incomplete or empty results.")
-            logger.error("=" * 70)
+                # Run remote inference on all images
+                inference_start = time.time()
+                results = self.remote_detector.detect(
+                    all_images,
+                    output_dir=batch_dir / "results",
+                    cleanup=self.remote_cleanup,  # Configurable: default False for debugging
+                    auto_git_commit=auto_git_commit,
+                    gpu_batch_size=gpu_batch_size,
+                )
+                inference_time = time.time() - inference_start
 
-        # Group results by PDF
-        pdf_results = {}
-        result_idx = 0
+                if self.verbose:
+                    print(
+                        f"  ✓ Inference complete: {inference_time:.1f}s ({len(all_images)/inference_time:.1f} images/s)"
+                    )
+            else:
+                # No images to process
+                logger.info("No local images - all PDFs processed via remote persistent server")
+                results = []
+                inference_time = remote_processing_time  # Use remote processing time
 
-        for pdf_path in pdf_batch:
-            # Check if PDF extraction succeeded
-            if pdf_path.name not in pdf_page_counts:
-                # PDF extraction failed - skip this PDF, don't assign empty results
-                # The PDF will not be in batch_results, preventing caching attempts
-                logger.debug(f"Skipping {pdf_path.name} - not in pdf_page_counts (extraction failed)")
-                continue
+            # Validate inference returned correct number of results
+            if len(results) != len(all_images):
+                missing_count = len(all_images) - len(results)
+                logger.error("=" * 70)
+                logger.error(f"INFERENCE MISMATCH IN BATCH {batch_id}")
+                logger.error("=" * 70)
+                logger.error(f"Expected: {len(all_images)} results")
+                logger.error(f"Received: {len(results)} results")
+                logger.error(f"Missing:  {missing_count} results ({missing_count/len(all_images)*100:.1f}%)")
+                logger.error("")
+                logger.error(f"This indicates inference failed for {missing_count} images.")
+                logger.error("Check inference.err logs for details (likely OOM or model errors).")
+                logger.error("Affected PDFs in this batch will have incomplete or empty results.")
+                logger.error("=" * 70)
 
-            num_pages = pdf_page_counts[pdf_path.name]
+            # Group results by PDF (traditional path only)
+            pdf_results = {}
+            result_idx = 0
 
-            # Additional validation: Ensure we don't create empty results
-            # This should NEVER happen now - kept as defense-in-depth
-            if num_pages == 0:
-                logger.error(f"CRITICAL BUG: {pdf_path.name} has pdf_page_counts = 0")
+        # Only slice results if using traditional upload path
+        # (remote path already has pdf_results populated)
+        if not (remote_results and len(all_images) == 0):
+            for pdf_path in pdf_batch:
+                # Check if PDF extraction succeeded
+                if pdf_path.name not in pdf_page_counts:
+                    # PDF extraction failed - skip this PDF, don't assign empty results
+                    # The PDF will not be in batch_results, preventing caching attempts
+                    logger.debug(f"Skipping {pdf_path.name} - not in pdf_page_counts (extraction failed)")
+                    continue
+
+                num_pages = pdf_page_counts[pdf_path.name]
+
+                # Additional validation: Ensure we don't create empty results
+                # This should NEVER happen now - kept as defense-in-depth
+                if num_pages == 0:
+                    logger.error(f"CRITICAL BUG: {pdf_path.name} has pdf_page_counts = 0")
                 logger.error("  This should have been caught earlier in the pipeline!")
                 logger.error("  Please investigate why this PDF reached this point")
                 continue
 
-            pdf_result_list = results[result_idx : result_idx + num_pages]
+                pdf_result_list = results[result_idx : result_idx + num_pages]
 
-            # ═══════════════════════════════════════════════════════════════════
-            # VALIDATION: Verify filenames match PDF stem (catch contamination bug)
-            # ═══════════════════════════════════════════════════════════════════
-            expected_pdf_stem = pdf_path.stem
-            filename_mismatches = []
+                # ═══════════════════════════════════════════════════════════════════
+                # VALIDATION: Verify filenames match PDF stem (catch contamination bug)
+                # ═══════════════════════════════════════════════════════════════════
+                expected_pdf_stem = pdf_path.stem
+                filename_mismatches = []
 
-            for page_idx, result in enumerate(pdf_result_list):
-                # Each result should have filename containing the PDF stem
-                if hasattr(result, "filename") and result.filename:
-                    if expected_pdf_stem not in result.filename:
-                        filename_mismatches.append(
-                            {
-                                "page_idx": page_idx,
-                                "expected_stem": expected_pdf_stem,
-                                "actual_filename": result.filename,
-                                "result_global_idx": result_idx + page_idx,
-                            }
+                for page_idx, result in enumerate(pdf_result_list):
+                    # Each result should have filename containing the PDF stem
+                    if hasattr(result, "filename") and result.filename:
+                        if expected_pdf_stem not in result.filename:
+                            filename_mismatches.append(
+                                {
+                                    "page_idx": page_idx,
+                                    "expected_stem": expected_pdf_stem,
+                                    "actual_filename": result.filename,
+                                    "result_global_idx": result_idx + page_idx,
+                                }
+                            )
+
+                if filename_mismatches:
+                    logger.error("")
+                    logger.error(f"{'═' * 70}")
+                    logger.error(f"CONTAMINATION DETECTED: Filename mismatch in batch {batch_id}")
+                    logger.error(f"{'═' * 70}")
+                    logger.error(f"PDF: {pdf_path.name}")
+                    logger.error(f"Expected stem: {expected_pdf_stem}")
+                    logger.error(f"Result slice: [{result_idx}:{result_idx + num_pages}]")
+                    logger.error(f"Mismatches found: {len(filename_mismatches)}/{num_pages} pages")
+                    logger.error("")
+
+                    # Log first few mismatches for diagnosis
+                    for mm in filename_mismatches[:5]:
+                        logger.error(f"  Page {mm['page_idx'] + 1}:")
+                        logger.error(f"    Expected stem:    {mm['expected_stem']}")
+                        logger.error(f"    Actual filename:  {mm['actual_filename']}")
+                        logger.error(f"    Result index:     {mm['result_global_idx']}")
+
+                    if len(filename_mismatches) > 5:
+                        logger.error(f"  ... and {len(filename_mismatches) - 5} more")
+
+                    logger.error("")
+                    logger.error("This indicates the result slicing is incorrect!")
+                    logger.error("Possible causes:")
+                    logger.error("  - pdf_page_counts is wrong for earlier PDFs")
+                    logger.error("  - pdf_batch iteration order changed")
+                    logger.error("  - all_images order doesn't match pdf_batch order")
+                    logger.error(f"{'═' * 70}")
+
+                    # Log forensic info for debugging
+                    logger.debug("")
+                    logger.debug("FORENSIC INFO:")
+                    logger.debug(f"  Current PDF: {pdf_path.name}")
+                    logger.debug(f"  Current result_idx: {result_idx}")
+                    logger.debug(f"  Current num_pages: {num_pages}")
+                    logger.debug(f"  Total results: {len(results)}")
+                    logger.debug(f"  pdf_page_counts keys: {list(pdf_page_counts.keys())[:10]}")
+
+                    # CRITICAL: Don't cache contaminated results!
+                    batch_failed[pdf_path.name] = "contamination_detected"
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf_path.name,
+                            status="contamination_detected",
+                            pages_extracted=num_pages,
+                            pages_detected=len(pdf_result_list),
+                            num_diagrams=sum(r.count for r in pdf_result_list),
+                            error_type="FilenameMismatch",
+                            error_message=f"{len(filename_mismatches)}/{num_pages} pages have wrong filenames",
                         )
 
-            if filename_mismatches:
-                logger.error("")
-                logger.error(f"{'═' * 70}")
-                logger.error(f"CONTAMINATION DETECTED: Filename mismatch in batch {batch_id}")
-                logger.error(f"{'═' * 70}")
-                logger.error(f"PDF: {pdf_path.name}")
-                logger.error(f"Expected stem: {expected_pdf_stem}")
-                logger.error(f"Result slice: [{result_idx}:{result_idx + num_pages}]")
-                logger.error(f"Mismatches found: {len(filename_mismatches)}/{num_pages} pages")
-                logger.error("")
+                    # Skip this PDF - don't add to pdf_results (prevents caching)
+                    result_idx += len(pdf_result_list)
+                    continue
 
-                # Log first few mismatches for diagnosis
-                for mm in filename_mismatches[:5]:
-                    logger.error(f"  Page {mm['page_idx'] + 1}:")
-                    logger.error(f"    Expected stem:    {mm['expected_stem']}")
-                    logger.error(f"    Actual filename:  {mm['actual_filename']}")
-                    logger.error(f"    Result index:     {mm['result_global_idx']}")
-
-                if len(filename_mismatches) > 5:
-                    logger.error(f"  ... and {len(filename_mismatches) - 5} more")
-
-                logger.error("")
-                logger.error("This indicates the result slicing is incorrect!")
-                logger.error("Possible causes:")
-                logger.error("  - pdf_page_counts is wrong for earlier PDFs")
-                logger.error("  - pdf_batch iteration order changed")
-                logger.error("  - all_images order doesn't match pdf_batch order")
-                logger.error(f"{'═' * 70}")
-
-                # Log forensic info for debugging
-                logger.debug("")
-                logger.debug("FORENSIC INFO:")
-                logger.debug(f"  Current PDF: {pdf_path.name}")
-                logger.debug(f"  Current result_idx: {result_idx}")
-                logger.debug(f"  Current num_pages: {num_pages}")
-                logger.debug(f"  Total results: {len(results)}")
-                logger.debug(f"  pdf_page_counts keys: {list(pdf_page_counts.keys())[:10]}")
-
-                # CRITICAL: Don't cache contaminated results!
-                batch_failed[pdf_path.name] = "contamination_detected"
-                if manifest_path:
-                    _log_pdf_status(
-                        manifest_path=manifest_path,
-                        pdf_name=pdf_path.name,
-                        status="contamination_detected",
-                        pages_extracted=num_pages,
-                        pages_detected=len(pdf_result_list),
-                        num_diagrams=sum(r.count for r in pdf_result_list),
-                        error_type="FilenameMismatch",
-                        error_message=f"{len(filename_mismatches)}/{num_pages} pages have wrong filenames",
-                    )
-
-                # Skip this PDF - don't add to pdf_results (prevents caching)
-                result_idx += len(pdf_result_list)
-                continue
-
-            # CHECKPOINT 6: Result Count Validation
-            # Verify we got expected number of results (= num_pages)
-            if len(pdf_result_list) != num_pages:
-                logger.warning("")
-                logger.warning(f"⚠️  RESULT COUNT MISMATCH: {pdf_path.name}")
-                logger.warning(f"  Expected: {num_pages} results (= page count)")
-                logger.warning(f"  Actual:   {len(pdf_result_list)} results")
-                logger.warning(f"  Difference: {abs(len(pdf_result_list) - num_pages)}")
-                logger.warning("")
-                # This is a warning, not fatal - inference might skip some pages
-
-            # CHECKPOINT 7: Page Number Sequencing
-            # Verify results are ordered by page number within each PDF
-            if len(pdf_result_list) > 1:
-                page_numbers = [r.page_number for r in pdf_result_list]
-                expected_order = sorted(page_numbers)
-                if page_numbers != expected_order:
+                # CHECKPOINT 6: Result Count Validation
+                # Verify we got expected number of results (= num_pages)
+                if len(pdf_result_list) != num_pages:
                     logger.warning("")
-                    logger.warning(f"⚠️  PAGE ORDER ISSUE: {pdf_path.name}")
-                    logger.warning(f"  Page numbers: {page_numbers[:10]}")
-                    logger.warning(f"  Expected:     {expected_order[:10]}")
-                    logger.warning("  Results may be out of order!")
+                    logger.warning(f"⚠️  RESULT COUNT MISMATCH: {pdf_path.name}")
+                    logger.warning(f"  Expected: {num_pages} results (= page count)")
+                    logger.warning(f"  Actual:   {len(pdf_result_list)} results")
+                    logger.warning(f"  Difference: {abs(len(pdf_result_list) - num_pages)}")
                     logger.warning("")
+                    # This is a warning, not fatal - inference might skip some pages
 
-            # CHECKPOINT 8: Result Consistency
-            # Basic sanity checks on detection results
-            if len(pdf_result_list) > 0:
-                # Check for all-zero detections (suspicious)
-                all_zero = all(r.count == 0 for r in pdf_result_list)
-                if all_zero and len(pdf_result_list) > 5:
-                    logger.debug(f"  Note: {pdf_path.name} has 0 diagrams on all {len(pdf_result_list)} pages")
+                # CHECKPOINT 7: Page Number Sequencing
+                # Verify results are ordered by page number within each PDF
+                if len(pdf_result_list) > 1:
+                    page_numbers = [r.page_number for r in pdf_result_list]
+                    expected_order = sorted(page_numbers)
+                    if page_numbers != expected_order:
+                        logger.warning("")
+                        logger.warning(f"⚠️  PAGE ORDER ISSUE: {pdf_path.name}")
+                        logger.warning(f"  Page numbers: {page_numbers[:10]}")
+                        logger.warning(f"  Expected:     {expected_order[:10]}")
+                        logger.warning("  Results may be out of order!")
+                        logger.warning("")
 
-                # Check for unreasonably high detections (possible duplicate)
-                max_count = max(r.count for r in pdf_result_list)
-                if max_count > 20:
-                    logger.warning(f"  ⚠️  High diagram count: {pdf_path.name} has {max_count} diagrams on one page")
-
-            # Log success for first few PDFs (helps verify correct mapping)
-            if len(pdf_results) < 3:
-                logger.debug(f"✓ All validation checkpoints passed for {pdf_path.name}")
+                # CHECKPOINT 8: Result Consistency
+                # Basic sanity checks on detection results
                 if len(pdf_result_list) > 0:
-                    logger.debug(f"  Sample filenames: {[r.filename for r in pdf_result_list[:2]]}")
-                    logger.debug(f"  Page numbers: {[r.page_number for r in pdf_result_list[:3]]}")
+                    # Check for all-zero detections (suspicious)
+                    all_zero = all(r.count == 0 for r in pdf_result_list)
+                    if all_zero and len(pdf_result_list) > 5:
+                        logger.debug(f"  Note: {pdf_path.name} has 0 diagrams on all {len(pdf_result_list)} pages")
 
-            # CRITICAL: Check if slice returned empty results
-            # This happens when inference returned fewer results than expected
-            if len(pdf_result_list) == 0:
-                logger.error("")
-                logger.error(f"INFERENCE FAILURE: No results for {pdf_path.name}")
-                logger.error(f"  Pages extracted: {num_pages}")
-                logger.error("  Pages received:  0")
-                logger.error(f"  Result index:    {result_idx} (expected results at this index)")
-                logger.error(f"  Total results:   {len(results)} (inference stopped before this PDF)")
-                logger.error("")
-                logger.error("  Likely causes:")
-                logger.error("    - Out of memory (OOM) during inference")
-                logger.error("    - Model crash on corrupt/unusual images")
-                logger.error("    - Remote process killed")
-                logger.error("")
-                logger.error("  This PDF will be reprocessed on next run")
+                    # Check for unreasonably high detections (possible duplicate)
+                    max_count = max(r.count for r in pdf_result_list)
+                    if max_count > 20:
+                        logger.warning(f"  ⚠️  High diagram count: {pdf_path.name} has {max_count} diagrams on one page")
 
-                batch_failed[pdf_path.name] = "inference_failed"
-                if manifest_path:
+                # Log success for first few PDFs (helps verify correct mapping)
+                if len(pdf_results) < 3:
+                    logger.debug(f"✓ All validation checkpoints passed for {pdf_path.name}")
+                    if len(pdf_result_list) > 0:
+                        logger.debug(f"  Sample filenames: {[r.filename for r in pdf_result_list[:2]]}")
+                        logger.debug(f"  Page numbers: {[r.page_number for r in pdf_result_list[:3]]}")
+
+                # CRITICAL: Check if slice returned empty results
+                # This happens when inference returned fewer results than expected
+                if len(pdf_result_list) == 0:
+                    logger.error("")
+                    logger.error(f"INFERENCE FAILURE: No results for {pdf_path.name}")
+                    logger.error(f"  Pages extracted: {num_pages}")
+                    logger.error("  Pages received:  0")
+                    logger.error(f"  Result index:    {result_idx} (expected results at this index)")
+                    logger.error(f"  Total results:   {len(results)} (inference stopped before this PDF)")
+                    logger.error("")
+                    logger.error("  Likely causes:")
+                    logger.error("    - Out of memory (OOM) during inference")
+                    logger.error("    - Model crash on corrupt/unusual images")
+                    logger.error("    - Remote process killed")
+                    logger.error("")
+                    logger.error("  This PDF will be reprocessed on next run")
+
+                    batch_failed[pdf_path.name] = "inference_failed"
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf_path.name,
+                            status="inference_failed",
+                            pages_extracted=num_pages,
+                            pages_detected=0,
+                            num_diagrams=0,
+                            error_type="InferenceMismatch",
+                            error_message=f"Inference stopped before this PDF (expected at index {result_idx}, but only {len(results)} results total)",
+                        )
+
+                    # Don't add to pdf_results - let it be reprocessed
+                    continue
+
+                # Check if inference returned fewer pages than expected
+                if len(pdf_result_list) < num_pages:
+                    logger.warning(f"PARTIAL RESULTS: {pdf_path.name} got {len(pdf_result_list)}/{num_pages} pages")
+                    logger.warning("  Some pages failed inference")
+
+                    # Log partial result as inference_failed
+                    batch_failed[pdf_path.name] = "inference_failed"
+                    total_diagrams = sum(r.count for r in pdf_result_list)
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf_path.name,
+                            status="inference_failed",
+                            pages_extracted=num_pages,
+                            pages_detected=len(pdf_result_list),
+                            num_diagrams=total_diagrams,
+                            error_type="PartialResults",
+                            error_message=f"Received {len(pdf_result_list)}/{num_pages} pages (some pages failed inference)",
+                        )
+
+                # Add page numbers
+                for page_num, result in enumerate(pdf_result_list, start=1):
+                    result.page_number = page_num
+
+                pdf_results[pdf_path.name] = pdf_result_list
+                result_idx += len(pdf_result_list)  # Use actual results received, not expected
+
+                # Log successful processing (only if not already logged as partial)
+                if manifest_path and len(pdf_result_list) == num_pages:
+                    total_diagrams = sum(r.count for r in pdf_result_list)
+                    status = "success" if total_diagrams > 0 else "success_no_diagrams"
+
                     _log_pdf_status(
                         manifest_path=manifest_path,
                         pdf_name=pdf_path.name,
-                        status="inference_failed",
-                        pages_extracted=num_pages,
-                        pages_detected=0,
-                        num_diagrams=0,
-                        error_type="InferenceMismatch",
-                        error_message=f"Inference stopped before this PDF (expected at index {result_idx}, but only {len(results)} results total)",
-                    )
-
-                # Don't add to pdf_results - let it be reprocessed
-                continue
-
-            # Check if inference returned fewer pages than expected
-            if len(pdf_result_list) < num_pages:
-                logger.warning(f"PARTIAL RESULTS: {pdf_path.name} got {len(pdf_result_list)}/{num_pages} pages")
-                logger.warning("  Some pages failed inference")
-
-                # Log partial result as inference_failed
-                batch_failed[pdf_path.name] = "inference_failed"
-                total_diagrams = sum(r.count for r in pdf_result_list)
-                if manifest_path:
-                    _log_pdf_status(
-                        manifest_path=manifest_path,
-                        pdf_name=pdf_path.name,
-                        status="inference_failed",
+                        status=status,
                         pages_extracted=num_pages,
                         pages_detected=len(pdf_result_list),
                         num_diagrams=total_diagrams,
-                        error_type="PartialResults",
-                        error_message=f"Received {len(pdf_result_list)}/{num_pages} pages (some pages failed inference)",
+                        error_type="",
+                        error_message="",
                     )
-
-            # Add page numbers
-            for page_num, result in enumerate(pdf_result_list, start=1):
-                result.page_number = page_num
-
-            pdf_results[pdf_path.name] = pdf_result_list
-            result_idx += len(pdf_result_list)  # Use actual results received, not expected
-
-            # Log successful processing (only if not already logged as partial)
-            if manifest_path and len(pdf_result_list) == num_pages:
-                total_diagrams = sum(r.count for r in pdf_result_list)
-                status = "success" if total_diagrams > 0 else "success_no_diagrams"
-
-                _log_pdf_status(
-                    manifest_path=manifest_path,
-                    pdf_name=pdf_path.name,
-                    status=status,
-                    pages_extracted=num_pages,
-                    pages_detected=len(pdf_result_list),
-                    num_diagrams=total_diagrams,
-                    error_type="",
-                    error_message="",
-                )
 
         # Merge remote_results into pdf_results (for batches with PDFs processed remotely)
         if remote_results:
