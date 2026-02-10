@@ -1613,27 +1613,60 @@ class SSHRemoteDetector:
             else:
                 print("    (loading model into GPU — one-time per run)")
 
-        # stderr → DEVNULL: the server redirects all detector output (YOLO
-        # progress bars, [DEBUG] lines) to stderr.  Capturing it via PIPE would
+        # stderr → temp file: the server redirects all detector output (YOLO
+        # progress bars, [DEBUG] lines) to stderr. Capturing it via PIPE would
         # fill the kernel pipe buffer and deadlock while we block on stdout.
-        # Diagnostics after a crash are available via remote inference.log/err.
-        self._server_proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
+        # We capture to a temp file so we can show it on startup failure.
+        import tempfile
 
-        # Block until READY (model loaded on remote GPU)
-        line = self._server_proc.stdout.readline().strip()
-        if line != "READY":
-            self._server_proc.kill()
-            self._server_proc = None
-            raise RuntimeError(
-                f"Persistent server did not send READY (got: {line!r}). "
-                f"Check remote stderr / inference.err for details."
+        stderr_file = tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix="_server_stderr.log")
+        stderr_path = stderr_file.name
+
+        try:
+            self._server_proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=stderr_file,
+                text=True,
             )
+
+            # Block until READY (model loaded on remote GPU)
+            line = self._server_proc.stdout.readline().strip()
+            if line != "READY":
+                self._server_proc.kill()
+                self._server_proc = None
+
+                # Read stderr to show what went wrong
+                stderr_file.seek(0)
+                stderr_content = stderr_file.read()
+                stderr_file.close()
+
+                # Show last 50 lines of stderr for diagnostics
+                stderr_lines = stderr_content.strip().split("\n")
+                stderr_summary = "\n".join(stderr_lines[-50:]) if stderr_lines else "(empty)"
+
+                raise RuntimeError(
+                    f"Persistent server did not send READY (got: {line!r}).\n\n"
+                    f"Server stderr (last 50 lines):\n"
+                    f"{'='*70}\n"
+                    f"{stderr_summary}\n"
+                    f"{'='*70}"
+                )
+
+            # Success - close stderr file (server will continue writing to it, but we don't need it)
+            stderr_file.close()
+
+        except Exception:
+            # Clean up on any error
+            try:
+                stderr_file.close()
+                import os
+
+                os.unlink(stderr_path)
+            except (OSError, IOError):
+                pass
+            raise
 
         if self.verbose:
             print("  ✓ Persistent server ready (model loaded)")
