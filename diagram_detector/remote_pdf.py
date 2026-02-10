@@ -1337,14 +1337,17 @@ class PDFRemoteDetector:
                 # Verify results are ordered by page number within each PDF
                 if len(pdf_result_list) > 1:
                     page_numbers = [r.page_number for r in pdf_result_list]
-                    expected_order = sorted(page_numbers)
-                    if page_numbers != expected_order:
-                        logger.warning("")
-                        logger.warning(f"⚠️  PAGE ORDER ISSUE: {pdf_path.name}")
-                        logger.warning(f"  Page numbers: {page_numbers[:10]}")
-                        logger.warning(f"  Expected:     {expected_order[:10]}")
-                        logger.warning("  Results may be out of order!")
-                        logger.warning("")
+                    # Filter out None values before sorting (some results may lack page numbers)
+                    valid_page_numbers = [p for p in page_numbers if p is not None]
+                    if valid_page_numbers:
+                        expected_order = sorted(valid_page_numbers)
+                        if valid_page_numbers != expected_order:
+                            logger.warning("")
+                            logger.warning(f"⚠️  PAGE ORDER ISSUE: {pdf_path.name}")
+                            logger.warning(f"  Page numbers: {page_numbers[:10]}")
+                            logger.warning(f"  Expected:     {expected_order[:10]}")
+                            logger.warning("  Results may be out of order!")
+                            logger.warning("")
 
                 # CHECKPOINT 8: Result Consistency
                 # Basic sanity checks on detection results
