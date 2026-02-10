@@ -1702,6 +1702,10 @@ class SSHRemoteDetector:
 
         if self.verbose:
             print(f"  Running inference on {len(pdf_paths)} PDFs on remote...")
+            print(f"  [ORDERING LOG] Sending infer_pdfs command with {len(pdf_paths)} PDFs")
+            if len(pdf_paths) >= 3:
+                print(f"  [ORDERING LOG]   First 3 PDFs: {[Path(p).name for p in pdf_paths[:3]]}")
+                print(f"  [ORDERING LOG]   Last 3 PDFs: {[Path(p).name for p in pdf_paths[-3:]]}")
 
         output_dir = f"{self.config.remote_work_dir}/output/{batch_id}"
 

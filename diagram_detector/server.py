@@ -167,6 +167,13 @@ def main():
             output_dir = Path(cmd["output"]).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # ORDERING LOG: Show what PDFs were received and in what order
+            sys.stderr.write(f"[SERVER ORDERING] Received infer_pdfs command with {len(pdf_paths)} PDFs\n")
+            if len(pdf_paths) >= 3:
+                sys.stderr.write(f"[SERVER ORDERING]   First 3: {[p.name for p in pdf_paths[:3]]}\n")
+                sys.stderr.write(f"[SERVER ORDERING]   Last 3: {[p.name for p in pdf_paths[-3:]]}\n")
+            sys.stderr.flush()
+
             try:
                 # Extract PDFs to temporary directory on remote
                 import tempfile
@@ -205,10 +212,43 @@ def main():
                             sys.stderr.flush()
 
                     sys.stderr.write(f"[SERVER] Extraction complete: {total_images} images in {temp_path}\n")
+
+                    # CRITICAL FIX: Create manifest.txt to preserve PDF ordering
+                    # Without this, detector.detect() uses glob which returns filesystem order
+                    # This causes contamination (results assigned to wrong PDFs)
+                    manifest_path = temp_path / "manifest.txt"
+                    sys.stderr.write("[SERVER] Creating manifest.txt to preserve PDF order...\n")
+                    sys.stderr.flush()
+
+                    with open(manifest_path, "w") as f:
+                        f.write("# Image processing manifest - explicit PDF ordering\n")
+                        f.write(f"# PDFs: {len(pdf_paths)}\n")
+                        f.write(f"# Total images: {total_images}\n")
+                        f.write("#\n")
+                        f.write("# Order matches pdf_paths list sent to infer_pdfs command\n")
+                        f.write("#\n")
+
+                        # Write images in PDF order (each PDF's subdirectory in sequence)
+                        for pdf_path in pdf_paths:
+                            pdf_output_dir = temp_path / pdf_path.stem
+                            if pdf_output_dir.exists():
+                                # Get all images from this PDF's subdirectory
+                                # Sort by page number to ensure correct page order within each PDF
+                                pdf_images = sorted(pdf_output_dir.glob("*.jpg"))
+                                for img_path in pdf_images:
+                                    # Write relative path (subdir/filename.jpg)
+                                    relative_path = img_path.relative_to(temp_path)
+                                    f.write(f"{relative_path}\n")
+
+                    manifest_image_count = (
+                        len(list(manifest_path.read_text().strip().split("\n"))) - 6
+                    )  # subtract header lines
+                    sys.stderr.write(f"[SERVER] Manifest created: {manifest_image_count} images in PDF order\n")
                     sys.stderr.write(f"[SERVER] Starting detection on {temp_path}\n")
                     sys.stderr.flush()
 
                     # Run detection on extracted images
+                    # Detector will find manifest.txt and use explicit ordering
                     results = detector.detect(temp_path, store_images=False)
 
                     sys.stderr.write(f"[SERVER] Detection complete: {len(results)} results\n")
