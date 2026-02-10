@@ -1152,6 +1152,12 @@ class PDFRemoteDetector:
                 logger.error(f"  Actual:   {actual_sequence[:10]}")
                 logger.error("  This indicates manifest.txt was not used or is incorrect!")
                 logger.error("=" * 70)
+                # FATAL ERROR: Stop processing to prevent contamination
+                raise RuntimeError(
+                    f"CHECKPOINT 3 FATAL: Image order contamination detected in batch {batch_id}. "
+                    f"Expected sequence doesn't match actual. This will cause results to be assigned to wrong PDFs. "
+                    f"Stopping to prevent data corruption."
+                )
 
         # ═══════════════════════════════════════════════════════════════════
         # OPTIMIZATION: Use remote results directly if available
@@ -1235,9 +1241,9 @@ class PDFRemoteDetector:
                 # This should NEVER happen now - kept as defense-in-depth
                 if num_pages == 0:
                     logger.error(f"CRITICAL BUG: {pdf_path.name} has pdf_page_counts = 0")
-                logger.error("  This should have been caught earlier in the pipeline!")
-                logger.error("  Please investigate why this PDF reached this point")
-                continue
+                    logger.error("  This should have been caught earlier in the pipeline!")
+                    logger.error("  Please investigate why this PDF reached this point")
+                    continue
 
                 pdf_result_list = results[result_idx : result_idx + num_pages]
 
