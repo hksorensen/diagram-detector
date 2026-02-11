@@ -927,19 +927,63 @@ class PDFRemoteDetector:
         remote_processing_time = 0.0
         if pdfs_on_remote_list:
             logger.info(f"Processing {len(pdfs_on_remote_list)} PDFs directly on remote (skip extraction+upload)")
-            try:
-                remote_results, remote_time = self._process_remote_pdfs(
-                    pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size
-                )
-                remote_processing_time = remote_time
-                logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
-            except Exception as e:
-                logger.error(f"Remote PDF processing failed: {e}")
-                logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote_list)} PDFs")
-                # Fall back to local extraction
-                fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote_list, batch_dir)
-                pdf_images.update(fallback_images)
-                extraction_time += fallback_time
+
+            # Retry logic: attempt remote processing with automatic retry on server death
+            max_retries = 2  # Try up to 2 times (initial + 1 retry)
+            retry_delay = 2  # seconds between retries
+
+            for attempt in range(max_retries):
+                try:
+                    remote_results, remote_time = self._process_remote_pdfs(
+                        pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size
+                    )
+                    remote_processing_time = remote_time
+                    logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
+                    break  # Success - exit retry loop
+
+                except RuntimeError as e:
+                    # Check if it's a server death (not other RuntimeErrors)
+                    if "Persistent server died" in str(e):
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Remote server died (attempt {attempt+1}/{max_retries}). "
+                                f"Reconnecting in {retry_delay}s..."
+                            )
+                            time.sleep(retry_delay)
+
+                            # Restart persistent server for retry
+                            try:
+                                if self.remote_detector._server_proc:
+                                    logger.info("Cleaning up dead server process...")
+                                    self.remote_detector._server_proc = None
+                                logger.info("Restarting persistent server...")
+                                self.remote_detector._start_persistent_server()
+                                logger.info("✓ Server restarted, retrying inference...")
+                            except Exception as restart_error:
+                                logger.error(f"Failed to restart server: {restart_error}")
+                                # Don't retry if we can't restart
+                                break
+                        else:
+                            # Final attempt failed
+                            logger.error(f"Remote PDF processing failed after {max_retries} attempts: {e}")
+                            logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote_list)} PDFs")
+                            # Fall back to local extraction
+                            fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote_list, batch_dir)
+                            pdf_images.update(fallback_images)
+                            extraction_time += fallback_time
+                    else:
+                        # Not a server death error - re-raise
+                        raise
+
+                except Exception as e:
+                    # Other exceptions - log and fall back immediately
+                    logger.error(f"Remote PDF processing failed: {e}")
+                    logger.warning(f"Falling back to local extraction for {len(pdfs_on_remote_list)} PDFs")
+                    # Fall back to local extraction
+                    fallback_images, fallback_time = self._extract_pdfs_parallel(pdfs_on_remote_list, batch_dir)
+                    pdf_images.update(fallback_images)
+                    extraction_time += fallback_time
+                    break  # Don't retry on non-server-death errors
 
         # Flatten to all images
         all_images = []
