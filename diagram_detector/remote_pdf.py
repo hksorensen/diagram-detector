@@ -609,7 +609,12 @@ class PDFRemoteDetector:
         return pdf_images, extraction_time
 
     def _process_remote_pdfs(
-        self, pdfs_on_remote: List[Path], remote_pdf_base: str, batch_id: str, gpu_batch_size: int = 32
+        self,
+        pdfs_on_remote: List[Path],
+        remote_pdf_base: str,
+        batch_id: str,
+        gpu_batch_size: int = 32,
+        manifest_path: Optional[Path] = None,
     ) -> tuple[Dict[str, List[DetectionResult]], float]:
         """
         Process PDFs that are already on remote server.
@@ -800,8 +805,32 @@ class PDFRemoteDetector:
 
                 if not pdf_results:
                     logger.warning(f"No results found for {pdf.name}")
+                    # Log as failed to manifest
+                    if manifest_path:
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf.name,
+                            status="inference_failed",
+                            pages_extracted=0,
+                            pages_detected=0,
+                            num_diagrams=0,
+                            error_type="NoResults",
+                            error_message="No detection results returned from remote processing",
+                        )
                 else:
                     match_count += 1
+                    # Log success to manifest
+                    if manifest_path:
+                        total_diagrams = sum(r.count for r in pdf_results)
+                        status = "success" if total_diagrams > 0 else "success_no_diagrams"
+                        _log_pdf_status(
+                            manifest_path=manifest_path,
+                            pdf_name=pdf.name,
+                            status=status,
+                            pages_extracted=len(pdf_results),
+                            pages_detected=len(pdf_results),
+                            num_diagrams=total_diagrams,
+                        )
 
                 results_dict[pdf.name] = pdf_results
 
@@ -935,7 +964,7 @@ class PDFRemoteDetector:
             for attempt in range(max_retries):
                 try:
                     remote_results, remote_time = self._process_remote_pdfs(
-                        pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size
+                        pdfs_on_remote_list, remote_pdf_base, batch_id, gpu_batch_size, manifest_path
                     )
                     remote_processing_time = remote_time
                     logger.info(f"✓ Remote PDF processing completed ({remote_time:.1f}s)")
