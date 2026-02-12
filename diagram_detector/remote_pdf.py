@@ -1503,11 +1503,13 @@ class PDFRemoteDetector:
         total_diagrams = sum(r.count for page_results in pdf_results.values() for r in page_results)
 
         logger.info(f"[BATCH {batch_id}] Timing breakdown:")
-        logger.info(f"  Extraction:  {extraction_time:6.1f}s ({100*extraction_time/total_time:5.1f}%)")
-        logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
-        logger.info(f"  Total:       {total_time:6.1f}s")
         if total_time > 0:
+            logger.info(f"  Extraction:  {extraction_time:6.1f}s ({100*extraction_time/total_time:5.1f}%)")
+            logger.info(f"  Inference:   {inference_time:6.1f}s ({100*inference_time/total_time:5.1f}%)")
+            logger.info(f"  Total:       {total_time:6.1f}s")
             logger.info(f"  Throughput:  {total_pages/total_time:.1f} pages/s")
+        else:
+            logger.warning("  Total time is zero - batch processing may have failed")
         logger.info(f"  Results:     {len(pdf_results)} PDFs, {total_pages} pages, {total_diagrams} diagrams")
 
         # Cleanup batch directory
